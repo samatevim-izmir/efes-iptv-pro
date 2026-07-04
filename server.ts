@@ -606,6 +606,72 @@ const FREE_IPTV_CHANNELS = [
     type: "series",
     episode: 4,
     dubbingOptions: ["TR (Orijinal)"]
+  },
+  {
+    id: "premium_netflix_kulup",
+    name: "NETFLIX: Kulüp (Premium Dizi)",
+    logo: "https://images.unsplash.com/photo-1574375927938-d5a98e8edd86?q=80&w=400&auto=format&fit=crop",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+    category: "Premium",
+    description: "1950'li yılların İstanbul'unda geçen, eski bir mahkum olan Matilda'nın kızıyla ilişkisini ve dönemin ünlü gece kulübü hayatını anlatan Netflix orijinal yapımı.",
+    language: "TR",
+    type: "series",
+    dubbingOptions: ["TR (Orijinal)", "EN (English)", "DE (Deutsch)"]
+  },
+  {
+    id: "premium_blutv_prens",
+    name: "BLUTV: Prens (Komedi Serisi)",
+    logo: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=400&auto=format&fit=crop",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+    category: "Premium",
+    description: "Bongomia adındaki hayali bir krallığın ciddiyetten tamamen uzak, komik ve umursamaz prensinin taht mücadelelerini konu edinen BluTV orijinal komedi dizisi.",
+    language: "TR",
+    type: "series",
+    dubbingOptions: ["TR (Orijinal)"]
+  },
+  {
+    id: "premium_exxen_gibi",
+    name: "EXXEN: Gibi (Durum Komedisi)",
+    logo: "https://images.unsplash.com/photo-1485846234645-a62644f84728?q=80&w=400&auto=format&fit=crop",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    category: "Premium",
+    description: "Yılmaz, İlkkan ve Ersoy'un sıradan görünen ama her anıyla hayatın absürt sınırlarını zorlayan günlük maceralarını konu alan Exxen efsane durum komedisi dizisi.",
+    language: "TR",
+    type: "series",
+    dubbingOptions: ["TR (Orijinal)"]
+  },
+  {
+    id: "premium_gain_ayak_isleri",
+    name: "GAIN: Ayak İşleri (Aksiyon Komedi)",
+    logo: "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?q=80&w=400&auto=format&fit=crop",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+    category: "Premium",
+    description: "Birbirine taban tabana zıt Vedat ve Evren'in, zengin bir iş adamının absürt ayak işlerini hallederken başlarına gelen aksiyon ve felsefe dolu Gain komedisi.",
+    language: "TR",
+    type: "series",
+    dubbingOptions: ["TR (Orijinal)"]
+  },
+  {
+    id: "premium_tod_belgesel",
+    name: "TOD: Derin Mavi Sualtı Dünyası (Belgesel)",
+    logo: "https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=400&auto=format&fit=crop",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
+    category: "Premium",
+    description: "Okyanusların en derin noktalarından mercan resiflerine kadar uzanan büyüleyici yaşamı ultra yüksek çözünürlükle keşfedin. TOD Premium belgesel serisi.",
+    language: "TR",
+    type: "documentary",
+    dubbingOptions: ["TR (Dublajlı)", "EN (Original)"]
+  },
+  {
+    id: "premium_netflix_terzi",
+    name: "NETFLIX: Terzi (Dram & Gizem)",
+    logo: "https://images.unsplash.com/photo-1558769132-cb1aea458c5e?q=80&w=400&auto=format&fit=crop",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    category: "Premium",
+    description: "Yetenekli terzi Peyami'nin, hayatındaki sırlar, geçmişin yükü ve en yakın dostunun evleneceği kadınla kesişen gizemli aşk hikayesi. Netflix sinema filmi kalitesinde yapım.",
+    language: "TR",
+    type: "movie",
+    dubbingOptions: ["TR (Orijinal)", "EN (English)"]
   }
 ];
 
@@ -617,14 +683,35 @@ function getChannelsList(): any[] {
       const list = JSON.parse(data);
       // Check if new youtube channels exist, if not merge them
       const hasYoutubeSeed = list.some((c: any) => c.id === "yt_movie_hababam");
+      const hasPremiumSeed = list.some((c: any) => c.id === "premium_netflix_kulup");
+      let updatedList = list;
+      let needsWrite = false;
+
       if (!hasYoutubeSeed) {
-        // Merge default youtube channels to existing list
         const youtubeOnly = FREE_IPTV_CHANNELS.filter((c: any) => c.id.startsWith("yt_"));
-        const merged = [...list, ...youtubeOnly];
-        fs.writeFileSync(CHANNELS_FILE, JSON.stringify(merged, null, 2), "utf-8");
-        return merged;
+        updatedList = [...updatedList, ...youtubeOnly];
+        needsWrite = true;
       }
-      return list;
+
+      if (!hasPremiumSeed) {
+        const premiumOnly = FREE_IPTV_CHANNELS.filter((c: any) => c.id.startsWith("premium_"));
+        updatedList = [...updatedList, ...premiumOnly];
+        needsWrite = true;
+      }
+
+      // Normalize premium channel categories
+      updatedList = updatedList.map((c: any) => {
+        if (c.id && c.id.startsWith("premium_") && c.category !== "Premium") {
+          needsWrite = true;
+          return { ...c, category: "Premium" };
+        }
+        return c;
+      });
+
+      if (needsWrite) {
+        fs.writeFileSync(CHANNELS_FILE, JSON.stringify(updatedList, null, 2), "utf-8");
+      }
+      return updatedList;
     }
   } catch (err) {
     console.error("Error reading channels database:", err);
@@ -857,6 +944,30 @@ function classifyChannel(channel: any): { category: string; type: "live" | "movi
 
   let category = "National";
   let type: "live" | "movie" | "series" | "documentary" = "live";
+
+  // Check for paid Turkish premium platforms first!
+  const isPremiumPlatform = 
+    name.includes("netflix") || name.includes("exxen") || name.includes("blutv") || 
+    name.includes("gain") || name.includes("tod") || name.includes("bein") || 
+    name.includes("digiturk") || name.includes("tivibu") || name.includes("d-smart") || 
+    name.includes("dsmart") || group.includes("netflix") || group.includes("exxen") || 
+    group.includes("blutv") || group.includes("gain") || group.includes("tod") || 
+    group.includes("bein") || group.includes("digiturk") || group.includes("tivibu") || 
+    group.includes("d-smart") || group.includes("dsmart") || (channel.id && channel.id.startsWith("premium_"));
+
+  if (isPremiumPlatform) {
+    category = "Premium";
+    if (name.includes("belgesel") || name.includes("docu") || group.includes("belgesel") || group.includes("documentary")) {
+      type = "documentary";
+    } else if (name.includes("film") || name.includes("sinema") || name.includes("cinema") || name.includes("movie") || name.includes("vizyon") || name.includes("aksiyon") || group.includes("movie") || group.includes("film") || group.includes("sinema")) {
+      type = "movie";
+    } else if (name.includes("dizi") || name.includes("series") || name.includes("episode") || group.includes("series") || group.includes("dizi")) {
+      type = "series";
+    } else {
+      type = "live";
+    }
+    return { category, type };
+  }
 
   if (name.includes("radyo") || name.includes("radio") || name.includes("fm") || group.includes("radio") || group.includes("radyo") || channel.streamUrl.endsWith(".mp3") || channel.streamUrl.endsWith(".aac")) {
     category = "Radio";

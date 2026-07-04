@@ -385,6 +385,7 @@ export default function App() {
   // Categories Sidebar Array
   const categoriesList = [
     { id: "National", label: t.liveTv, icon: Tv2 },
+    { id: "Premium", label: "Premium Platformlar", icon: Sparkles },
     { id: "Movies", label: t.movies, icon: Film },
     { id: "Series", label: t.series, icon: PlayCircle },
     { id: "Documentary", label: t.documentaries, icon: Globe },
@@ -408,6 +409,7 @@ export default function App() {
     if (!catId) return "";
     switch (catId) {
       case "National": return lang === "TR" ? "Canlı ulusal, haber ve spor TV yayınları." : "Live national, news, and sports channels.";
+      case "Premium": return lang === "TR" ? "Netflix, BluTV, Exxen, Gain ve TOD Premium film, dizi ve özel içerikleri." : "Premium Turkish OTT platform movies, series, and exclusives.";
       case "Movies": return lang === "TR" ? "Özenle seçilmiş yerli ve yabancı sinema filmleri." : "Selected blockbuster movies.";
       case "Series": return lang === "TR" ? "Popüler dizi serileri ve tüm bölümler." : "Popular TV series and complete episodes.";
       case "Documentary": return lang === "TR" ? "Doğa, uzay, bilim ve tarih belgeselleri." : "Nature, science, and history documentaries.";
@@ -1200,6 +1202,7 @@ export default function App() {
                               className={`px-2 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200 text-slate-900"}`}
                             >
                               <option value="National">National</option>
+                              <option value="Premium">Premium</option>
                               <option value="Movies">Movies</option>
                               <option value="Series">Series</option>
                               <option value="Documentary">Documentary</option>
@@ -1491,6 +1494,8 @@ export default function App() {
           onClose={handleClosePlayerAndBackgroundAudio}
           onPlayNextEpisode={handlePlayNextEpisode}
           epgList={epgList}
+          playlist={filteredChannels}
+          onSelectChannel={handlePlayChannel}
         />
       )}
 

@@ -4,7 +4,7 @@ import { IPTVChannel, IPTVLanguage, TRANSLATIONS, EPGProgram } from "../types";
 import { 
   Play, Pause, RotateCcw, RotateCw, Maximize, Minimize, 
   Volume2, VolumeX, Settings, Disc, Sparkles, X, Tv, Radio, 
-  ChevronRight, Activity, Volume1, AlertCircle
+  ChevronRight, ChevronLeft, Activity, Volume1, AlertCircle
 } from "lucide-react";
 
 interface VideoPlayerProps {
@@ -15,6 +15,8 @@ interface VideoPlayerProps {
   savedPosition?: number;
   onPlayNextEpisode?: (channel: IPTVChannel) => void;
   epgList?: EPGProgram[];
+  playlist?: IPTVChannel[];
+  onSelectChannel?: (channel: IPTVChannel) => void;
 }
 
 export default function VideoPlayer({
@@ -24,7 +26,9 @@ export default function VideoPlayer({
   onSaveProgress,
   savedPosition = 0,
   onPlayNextEpisode,
-  epgList = []
+  epgList = [],
+  playlist = [],
+  onSelectChannel
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -70,8 +74,48 @@ export default function VideoPlayer({
   const [showSpeedTestModal, setShowSpeedTestModal] = useState(false);
   const [speedProgress, setSpeedProgress] = useState(0);
   const hlsRef = useRef<Hls | null>(null);
+  const mediaRecoveryAttempts = useRef<number>(0);
 
   const t = TRANSLATIONS[lang];
+
+  // Zapping logic (Next / Previous channel zapping)
+  const currentIdx = playlist.findIndex((c) => c.id === channel.id);
+  const hasZapping = playlist.length > 1 && currentIdx !== -1 && !!onSelectChannel;
+
+  const handlePrevChannel = () => {
+    if (!hasZapping || !onSelectChannel) return;
+    const prevIdx = currentIdx > 0 ? currentIdx - 1 : playlist.length - 1;
+    onSelectChannel(playlist[prevIdx]);
+  };
+
+  const handleNextChannel = () => {
+    if (!hasZapping || !onSelectChannel) return;
+    const nextIdx = currentIdx < playlist.length - 1 ? currentIdx + 1 : 0;
+    onSelectChannel(playlist[nextIdx]);
+  };
+
+  // Zapping keyboard shortcuts (ArrowUp, ArrowDown, [ or ] keys)
+  useEffect(() => {
+    if (!hasZapping) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
+        return;
+      }
+      if (e.key === "[" || e.key === "p" || e.key === "P") {
+        handlePrevChannel();
+      } else if (e.key === "]" || e.key === "n" || e.key === "N") {
+        handleNextChannel();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        handleNextChannel();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        handlePrevChannel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasZapping, currentIdx, playlist, onSelectChannel]);
 
   // Live Stream EPG automatic overlay state (show for 5 seconds on mount/load)
   const [showLiveEpgToast, setShowLiveEpgToast] = useState(false);
@@ -157,6 +201,7 @@ export default function VideoPlayer({
     setBackupIndex(-1);
     setRetryCount(0);
     setPlaybackError(null);
+    mediaRecoveryAttempts.current = 0;
     const initialProxy = channel.streamUrl && (
       channel.streamUrl.startsWith("http://") || 
       channel.streamUrl.includes(".m3u8") || 
@@ -363,7 +408,21 @@ export default function VideoPlayer({
       ? `/api/proxy?url=${encodeURIComponent(activeUrl)}` 
       : activeUrl;
 
-    const isM3u8 = activeUrl.endsWith(".m3u8") || activeUrl.includes("m3u8") || channel.category === "National" || channel.category === "News" || channel.category === "Sports" || channel.category === "Radio";
+    const isM3u8 = (
+      activeUrl.endsWith(".m3u8") || 
+      activeUrl.includes("m3u8") || 
+      channel.category === "National" || 
+      channel.category === "News" || 
+      channel.category === "Sports"
+    ) && 
+    !activeUrl.includes(".mp3") && 
+    !activeUrl.includes(".aac") && 
+    !activeUrl.includes(".wav") && 
+    !activeUrl.includes(".ogg") && 
+    !activeUrl.includes("mp3") && 
+    !activeUrl.includes("aac") &&
+    !activeUrl.includes("shoutcast") &&
+    !activeUrl.includes("icecast");
 
     if (isM3u8 && playerEngine !== "html5") {
       if (Hls.isSupported()) {
@@ -373,6 +432,7 @@ export default function VideoPlayer({
           backBufferLength: 120,
           maxBufferLength: 120,
           maxMaxBufferLength: 240,
+          maxBufferSize: 10 * 1024 * 1024, // 10MB Önbellek Havuzu (Buffer Cache Pool)
           maxBufferHole: 5, // skip gap holes aggressively
           highBufferWatchdogPeriod: 5,
           nudgeMaxRetry: 20, // autostuck recovery
@@ -389,6 +449,7 @@ export default function VideoPlayer({
           backBufferLength: 90,
           maxBufferLength: 60,
           maxMaxBufferLength: 120,
+          maxBufferSize: 10 * 1024 * 1024, // 10MB Önbellek Havuzu (Buffer Cache Pool)
           maxBufferHole: 2, // skips over gap holes (fixes video codec/sync pauses)
           highBufferWatchdogPeriod: 3,
           nudgeMaxRetry: 10, // autostuck recovery
@@ -425,7 +486,14 @@ export default function VideoPlayer({
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.warn("Fatal media decoding error, trying to recover standard sync...");
-                hls?.recoverMediaError();
+                mediaRecoveryAttempts.current += 1;
+                if (mediaRecoveryAttempts.current > 2) {
+                  console.warn("Too many media decoding errors. Falling back to native HTML5 standard codec...");
+                  setPlaybackError("Ses veya video çözücü hatası algılandı. Süper Uyumlu yerel HTML5 moduna geçiliyor...");
+                  setPlayerEngine("html5");
+                } else {
+                  hls?.recoverMediaError();
+                }
                 break;
               default:
                 console.error("Fatal unrecoverable error. Switching to backup url...");
@@ -668,7 +736,7 @@ export default function VideoPlayer({
           ref={videoRef}
           autoPlay
           playsInline
-          className={`${isRadio ? "hidden" : getAspectRatioClass()} transition-all duration-350 bg-black`}
+          className={`${isRadio ? "opacity-0 absolute pointer-events-none w-[1px] h-[1px]" : getAspectRatioClass()} transition-all duration-350 bg-black`}
           onClick={togglePlay}
         />
       )}
@@ -837,16 +905,36 @@ export default function VideoPlayer({
 
       {/* Main Center Floating Controls */}
       <div
-        className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-500 z-30 ${
+        className={`absolute inset-0 flex items-center justify-center gap-8 pointer-events-none transition-opacity duration-500 z-30 ${
           showControls ? "opacity-100" : "opacity-0"
         }`}
       >
+        {hasZapping && (
+          <button
+            onClick={handlePrevChannel}
+            className="pointer-events-auto p-4 rounded-full bg-slate-900/90 border border-white/10 hover:border-cyan-400 text-white hover:text-cyan-400 transform hover:scale-110 active:scale-95 transition-all duration-200 shadow-xl flex items-center justify-center cursor-pointer"
+            title="Önceki Kanal (Zapping - [ Tuşu)"
+          >
+            <ChevronLeft className="w-7 h-7" />
+          </button>
+        )}
+
         <button
           onClick={togglePlay}
           className="pointer-events-auto p-6 rounded-full bg-cyan-500/20 border-2 border-cyan-400/50 hover:bg-cyan-400 hover:text-black text-cyan-400 transform hover:scale-110 active:scale-95 transition-all duration-200 shadow-2xl"
         >
           {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current" />}
         </button>
+
+        {hasZapping && (
+          <button
+            onClick={handleNextChannel}
+            className="pointer-events-auto p-4 rounded-full bg-slate-900/90 border border-white/10 hover:border-cyan-400 text-white hover:text-cyan-400 transform hover:scale-110 active:scale-95 transition-all duration-200 shadow-xl flex items-center justify-center cursor-pointer"
+            title="Sonraki Kanal (Zapping - ] Tuşu)"
+          >
+            <ChevronRight className="w-7 h-7" />
+          </button>
+        )}
       </div>
 
       {/* FOOTER BAR CONTROLS (Item: ekran buyutme kucultme butonlari, boyutlar, en guncel cozme) */}
@@ -878,6 +966,17 @@ export default function VideoPlayer({
         {/* Controls Grid */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
+            {/* Previous Channel Button */}
+            {hasZapping && (
+              <button
+                onClick={handlePrevChannel}
+                className="p-3 rounded-full bg-slate-900/90 hover:bg-slate-800 hover:text-cyan-400 text-white transition-all duration-200 border border-white/10 flex items-center justify-center cursor-pointer"
+                title="Önceki Kanal"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            )}
+
             {/* Play/Pause Button */}
             <button
               onClick={togglePlay}
@@ -886,6 +985,17 @@ export default function VideoPlayer({
             >
               {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
             </button>
+
+            {/* Next Channel Button */}
+            {hasZapping && (
+              <button
+                onClick={handleNextChannel}
+                className="p-3 rounded-full bg-slate-900/90 hover:bg-slate-800 hover:text-cyan-400 text-white transition-all duration-200 border border-white/10 flex items-center justify-center cursor-pointer"
+                title="Sonraki Kanal"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            )}
 
             {/* Rewind */}
             {!isRadio && (
