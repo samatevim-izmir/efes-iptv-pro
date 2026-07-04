@@ -4,6 +4,10 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dns from "dns";
 import fs from "fs";
+import AdmZip from "adm-zip";
+
+// Allow local proxy to stream and load any IPTV links regardless of expired or self-signed SSL/TLS certificates
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 const app = express();
 const PORT = 3000;
@@ -1455,6 +1459,156 @@ Return strictly a valid JSON object with keys: "description", "logoPrompt", "pro
     });
   } catch (err: any) {
     res.status(500).json({ error: "Gemini enrichment failed", details: err.message });
+  }
+});
+
+// Endpoint to update default Turkish channels dynamically from the internet
+app.post("/api/admin/update-turkish-channels", async (req, res) => {
+  const { token } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const trUrl = "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    
+    console.log("Updating Turkish channels from: " + trUrl);
+    const response = await fetch(trUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch tr.m3u list from GitHub. Status: ${response.status}`);
+    }
+
+    const text = await response.text();
+    const parsed = parseM3UContent(text);
+    if (!parsed || parsed.length === 0) {
+      throw new Error("No channels parsed from the M3U list.");
+    }
+
+    // Read current channels list
+    const currentList = getChannelsList();
+    
+    // Normalization helper
+    const normalize = (name: string) => {
+      return name.toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/hd/gi, "")
+        .replace(/sd/gi, "")
+        .replace(/yayını/gi, "")
+        .replace(/kanalı/gi, "")
+        .replace(/tv/gi, "")
+        .replace(/[^a-z0-9]/g, "");
+    };
+
+    let updatedCount = 0;
+    
+    // Update each channel in the current list
+    const updatedList = currentList.map((chan: any) => {
+      // Only process Turkish channels
+      if (chan.language === "TR" || chan.category === "National" || chan.category === "News" || chan.category === "Sports" || chan.category === "Kids") {
+        const normChanName = normalize(chan.name);
+        
+        // Find match in parsed list
+        const match = parsed.find((p: any) => {
+          const normPName = normalize(p.name);
+          return normPName === normChanName || normPName.includes(normChanName) || normChanName.includes(normPName);
+        });
+
+        if (match && match.streamUrl && match.streamUrl !== chan.streamUrl) {
+          chan.backupUrls = chan.backupUrls || [];
+          if (!chan.backupUrls.includes(chan.streamUrl)) {
+            chan.backupUrls.push(chan.streamUrl);
+          }
+          chan.streamUrl = match.streamUrl;
+          if (match.logo && (!chan.logo || chan.logo.includes("unsplash"))) {
+            chan.logo = match.logo;
+          }
+          updatedCount++;
+        }
+      }
+      return chan;
+    });
+
+    if (updatedCount > 0) {
+      saveChannelsList(updatedList);
+    }
+
+    res.json({
+      success: true,
+      message: `Türksat kanalları başarıyla internetteki en güncel çalışan listeler ile güncellendi!`,
+      updatedCount,
+      totalCount: updatedList.length
+    });
+  } catch (err: any) {
+    console.error("Error updating Turkish channels:", err);
+    res.status(500).json({ error: "Turkish channels update failed", details: err.message });
+  }
+});
+
+// Overwrite an existing file in the codebase directly from the UI
+app.post("/api/admin/upgrade-file", (req, res) => {
+  const { token, filePath, content } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  if (!filePath || typeof content !== "string") {
+    return res.status(400).json({ error: "filePath and content (string) are required" });
+  }
+
+  // Prevent directory traversal escape from workspace
+  const sanitizedPath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
+  const targetPath = path.join(process.cwd(), sanitizedPath);
+
+  try {
+    // Create parent directory if not exists
+    const dir = path.dirname(targetPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.writeFileSync(targetPath, content, "utf-8");
+    console.log(`System upgrade file overwritten successfully: ${sanitizedPath}`);
+
+    res.json({
+      success: true,
+      message: `Dosya başarıyla üzerine yazıldı: ${sanitizedPath}`
+    });
+  } catch (err: any) {
+    console.error(`Error overwriting file ${sanitizedPath}:`, err);
+    res.status(500).json({ error: "File write failed", details: err.message });
+  }
+});
+
+// Extract a full zip file over the workspace root, overwriting files
+app.post("/api/admin/upgrade-zip", (req, res) => {
+  const { token, zipBase64 } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  if (!zipBase64) {
+    return res.status(400).json({ error: "zipBase64 is required" });
+  }
+
+  try {
+    const zipBuffer = Buffer.from(zipBase64, "base64");
+    const zip = new AdmZip(zipBuffer);
+    
+    // Extract everything over process.cwd() (workspace root)
+    zip.extractAllTo(process.cwd(), true);
+    console.log("System upgraded successfully via zip extraction.");
+
+    res.json({
+      success: true,
+      message: "Yeni sürüm dosyaları başarıyla mevcut sürümün üzerine yazıldı! Uygulama güncellendi."
+    });
+  } catch (err: any) {
+    console.error("Error upgrading system via zip:", err);
+    res.status(500).json({ error: "Zip extraction failed", details: err.message });
   }
 });
 

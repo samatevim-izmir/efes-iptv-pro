@@ -77,10 +77,21 @@ export default function App() {
   const [addChannelType, setAddChannelType] = useState<"live" | "movie" | "series" | "documentary">("live");
   const [addChannelDesc, setAddChannelDesc] = useState("");
 
+  // Upgrade states
+  const [isUpdatingTurkish, setIsUpdatingTurkish] = useState(false);
+  const [turkishUpdateResult, setTurkishUpdateResult] = useState("");
+  const [upgradeFilePath, setUpgradeFilePath] = useState("src/App.tsx");
+  const [upgradeFileContent, setUpgradeFileContent] = useState("");
+  const [isUpgradingFile, setIsUpgradingFile] = useState(false);
+  const [upgradeFileResult, setUpgradeFileResult] = useState("");
+  const [isUpgradingZip, setIsUpgradingZip] = useState(false);
+  const [upgradeZipResult, setUpgradeZipResult] = useState("");
+
   // PWA (Progressive Web App) Install state and handlers
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const [showAndroidModal, setShowAndroidModal] = useState(false);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -322,6 +333,119 @@ export default function App() {
       }
     } catch {
       setAdminError("Kanal silinirken hata oluştu.");
+    }
+  };
+
+  // Handle Turkish channels automatic internet database refresh
+  const handleUpdateTurkishChannels = async () => {
+    if (!adminToken) return;
+    setIsUpdatingTurkish(true);
+    setTurkishUpdateResult("");
+    try {
+      setSecurityToast("Türksat Yayınları İnternetten Güncelleniyor...");
+      const res = await fetch("/api/admin/update-turkish-channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: adminToken })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTurkishUpdateResult(`Başarılı! ${data.updatedCount} Türksat kanalı en güncel çalışan adreslerle güncellendi.`);
+        setSecurityToast("Türksat Kanalları Güncellendi!");
+        // Refresh local state list
+        const channelsRes = await fetch("/api/auto-channels");
+        const channelsData = await channelsRes.json();
+        if (channelsData.channels) {
+          setChannels(channelsData.channels);
+        }
+      } else {
+        setTurkishUpdateResult(`Hata: ${data.error || "Güncelleme başarısız."}`);
+      }
+    } catch (err: any) {
+      setTurkishUpdateResult(`Hata: ${err.message}`);
+    } finally {
+      setIsUpdatingTurkish(false);
+    }
+  };
+
+  // Handle single file upgrade/overwrite
+  const handleUpgradeFile = async () => {
+    if (!adminToken) return;
+    if (!upgradeFilePath || !upgradeFileContent) {
+      setUpgradeFileResult("Lütfen dosya yolu ve dosya içeriğini doldurunuz.");
+      return;
+    }
+    setIsUpgradingFile(true);
+    setUpgradeFileResult("");
+    try {
+      setSecurityToast("Dosya Üzerine Yazılıyor...");
+      const res = await fetch("/api/admin/upgrade-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: adminToken,
+          filePath: upgradeFilePath,
+          content: upgradeFileContent
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUpgradeFileResult(`Başarılı! ${upgradeFilePath} dosyası başarıyla güncellendi.`);
+        setSecurityToast("Sistem Dosyası Güncellendi!");
+        setUpgradeFileContent("");
+      } else {
+        setUpgradeFileResult(`Hata: ${data.error || "Dosya güncellenemedi."}`);
+      }
+    } catch (err: any) {
+      setUpgradeFileResult(`Hata: ${err.message}`);
+    } finally {
+      setIsUpgradingFile(false);
+    }
+  };
+
+  // Handle ZIP file upload and extract upgrade
+  const handleUpgradeZip = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!adminToken) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUpgradingZip(true);
+    setUpgradeZipResult("ZIP Dosyası Okunuyor...");
+    setSecurityToast("Yeni Sürüm ZIP Yükleniyor...");
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(",")[1];
+        try {
+          const res = await fetch("/api/admin/upgrade-zip", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              token: adminToken,
+              zipBase64: base64
+            })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setUpgradeZipResult("Sürüm başarıyla güncellendi! Değişikliklerin devreye girmesi için sayfa yeniden yükleniyor...");
+            setSecurityToast("Sürüm Güncellendi!");
+            setTimeout(() => {
+              window.location.reload();
+            }, 3000);
+          } else {
+            setUpgradeZipResult(`Hata: ${data.error || "ZIP yüklenemedi."}`);
+          }
+        } catch (err: any) {
+          setUpgradeZipResult(`Hata: ${err.message}`);
+        } finally {
+          setIsUpgradingZip(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setUpgradeZipResult(`Dosya okuma hatası: ${err.message}`);
+      setIsUpgradingZip(false);
     }
   };
 
@@ -735,133 +859,176 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 font-sans ${theme === "dark" ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900"}`}>
+    <div className={`min-h-screen font-sans bg-cyber-bg text-white selection:bg-cyber-accent/20 selection:text-cyber-accent`}>
       
-
-
       {/* Floating security watermark text overlay across application canvas (Item 18) */}
-      <div className="fixed top-24 left-1/2 -translate-x-1/2 -rotate-12 opacity-[0.03] select-none pointer-events-none text-center font-mono text-3xl z-0 tracking-widest text-indigo-500">
+      <div className="fixed top-24 left-1/2 -translate-x-1/2 -rotate-12 opacity-[0.02] select-none pointer-events-none text-center font-mono text-3xl z-0 tracking-widest text-cyber-accent">
         SECURE IPTV PLATFORM COPY SHIELD VERIFICATION {license?.securityToken?.substring(0, 15)}
       </div>
 
-      {/* Top Navigation Bar */}
-      <header className={`sticky top-0 z-30 px-6 py-4 flex flex-wrap items-center justify-between gap-4 border-b ${theme === "dark" ? "bg-slate-950/80 border-slate-800 backdrop-blur" : "bg-white/80 border-slate-200 backdrop-blur"}`}>
+      {/* Main Terminal Grid Container */}
+      <div className="min-h-screen flex flex-col md:flex-row relative z-10">
         
-        {/* App Title & Dynamic Clock */}
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-md shadow-indigo-500/10">
-            <Tv className="w-6 h-6 animate-pulse" />
+        {/* Left Side: Slim Cyber Status Bar */}
+        <div className="hidden md:flex flex-col items-center justify-between py-8 px-4 border-r border-white/10 w-16 shrink-0 bg-black/40">
+          <div className="flex flex-col gap-6 items-center">
+            <div className="w-3 h-3 rounded-full bg-cyber-accent shadow-[0_0_12px_#00ff66] animate-pulse" title="System Normal"></div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10"></div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10"></div>
+            <div className="w-1.5 h-1.5 rounded-full bg-white/10"></div>
           </div>
-          <div>
-            <h1 className="text-sm font-black tracking-widest">{t.appName}</h1>
-            <div className="flex items-center gap-1.5 text-xs opacity-60">
-              <Clock className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="font-mono font-bold">{currentTime || "00:00:00"}</span>
+          <div className="font-mono text-[8px] text-white/20 -rotate-90 origin-center whitespace-nowrap tracking-widest py-4">
+            SYS_v6.82
+          </div>
+        </div>
+
+        {/* Middle Left Side: Categories Nav Pane Sidebar */}
+        <aside className="hidden md:flex flex-col border-r border-white/10 p-6 w-64 shrink-0 bg-black/20">
+          <div className="brand-id font-display text-xl font-extrabold tracking-widest text-cyber-accent mb-8 flex items-center gap-2">
+            <span className="inline-block w-2.5 h-2.5 bg-cyber-accent animate-ping rounded-full"></span>
+            EFES_PRO
+          </div>
+          
+          <div className="flex-1 flex flex-col justify-between">
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-[9px] text-white/30 mb-2 tracking-widest block font-bold">CATEGORIES_INDEX</span>
+              {categoriesList.map((cat, idx) => {
+                const isActive = activeCategory === cat.id;
+                const count = getCategoryCount(cat.id);
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveCategory(isActive ? null : cat.id)}
+                    className={`text-left font-mono text-[10px] tracking-wider uppercase py-2.5 px-3 rounded-md border transition-all duration-300 cursor-pointer flex justify-between items-center ${
+                      isActive
+                        ? "bg-cyber-accent/10 border-cyber-accent/50 text-cyber-accent shadow-[0_0_12px_rgba(0,255,102,0.1)] font-bold"
+                        : "bg-transparent border-transparent text-white/40 hover:text-white/80 hover:bg-white/5"
+                    }`}
+                  >
+                    <span>{String(idx + 1).padStart(2, '0')}_{cat.id.toUpperCase().substring(0, 15)}</span>
+                    {count !== undefined && (
+                      <span className="text-[8px] text-white/30">[{count}]</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-8 pt-4 border-t border-white/5 font-mono text-[9px] text-white/30 flex flex-col gap-1">
+              <div>UPLINK: <span className="text-white">842.1 MBPS</span></div>
+              <div>VERIFY: <span className="text-cyber-accent">PASS</span></div>
             </div>
           </div>
-        </div>
+        </aside>
 
-        {/* Global Control Toggles & Global Search */}
-        <div className="flex flex-wrap items-center gap-3">
-          
-          {/* Channel Search Input */}
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 opacity-50" />
-            <input
-              type="text"
-              placeholder={t.searchPlaceholder}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={`pl-9 pr-4 py-1.5 rounded-xl text-xs w-56 outline-none transition-all ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
-            />
-          </div>
+        {/* Right Side: Main Viewport (Top Header + Contents Grid + Bottom Status Footer) */}
+        <div className="flex-1 min-w-0 flex flex-col">
 
-          {/* TV / Remote Controller Mode Toggle */}
-          <button
-            onClick={() => {
-              setIsTvMode(!isTvMode);
-              if (!isTvMode) {
-                setShowRemoteHelp(true);
-                setFocusedSection("grid");
-              }
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide flex items-center gap-1.5 transition ${
-              isTvMode ? "bg-cyan-500 text-black shadow shadow-cyan-400/20" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-            }`}
-          >
-            <HelpCircle className="w-3.5 h-3.5" />
-            {isTvMode ? t.remoteMode : t.mouseMode}
-          </button>
+          {/* Top Navigation Bar */}
+          <header className="sticky top-0 z-30 px-6 py-4 flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-cyber-bg/90 backdrop-blur-md">
+            
+            {/* App Title & Dynamic Clock */}
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-md bg-cyber-accent/15 border border-cyber-accent/30 text-cyber-accent shadow-[0_0_15px_rgba(0,255,102,0.1)]">
+                <Tv className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h1 className="font-display text-sm sm:text-base font-black tracking-widest text-white uppercase">{t.appName}</h1>
+                <div className="flex items-center gap-1.5 text-[10px] font-mono text-cyber-accent">
+                  <Clock className="w-3 h-3" />
+                  <span className="font-bold">{currentTime || "00:00:00"}</span>
+                </div>
+              </div>
+            </div>
 
-          {/* Theme Selector */}
-          <button
-            onClick={() => {
-              const next = theme === "dark" ? "light" : "dark";
-              setTheme(next);
-              localStorage.setItem("iptv_theme", next);
-            }}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            title={t.themeToggle}
-          >
-            {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-400" />}
-          </button>
+            {/* Global Control Toggles & Global Search */}
+            <div className="flex flex-wrap items-center gap-3">
+              
+              {/* Channel Search Input */}
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-white/40" />
+                <input
+                  type="text"
+                  placeholder="SYSTEM_SEARCH_QUERY..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 pr-4 py-1.5 rounded-none bg-white/5 border border-white/10 text-xs w-48 sm:w-56 outline-none transition-all focus:border-cyber-accent focus:bg-white/10 text-white font-mono placeholder:text-white/20"
+                />
+              </div>
 
-          {/* Global Language Dropdown */}
-          <div className="relative flex items-center gap-1.5 bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl text-xs font-bold">
-            <Globe className="w-3.5 h-3.5" />
-            <select
-              value={lang}
-              onChange={(e) => {
-                const nextLang = e.target.value as IPTVLanguage;
-                setLang(nextLang);
-                localStorage.setItem("iptv_lang", nextLang);
-              }}
-              className="bg-transparent outline-none cursor-pointer pr-1"
-            >
-              <option value="TR" className="text-black">TR (Türkçe)</option>
-              <option value="EN" className="text-black">EN (English)</option>
-              <option value="DE" className="text-black">DE (Deutsch)</option>
-              <option value="FR" className="text-black">FR (Français)</option>
-              <option value="ES" className="text-black">ES (Español)</option>
-            </select>
-          </div>
+              {/* TV / Remote Controller Mode Toggle */}
+              <button
+                onClick={() => {
+                  setIsTvMode(!isTvMode);
+                  if (!isTvMode) {
+                    setShowRemoteHelp(true);
+                    setFocusedSection("grid");
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-none text-[10px] font-mono uppercase tracking-wider flex items-center gap-1.5 transition cursor-pointer border ${
+                  isTvMode ? "bg-cyber-accent text-black border-cyber-accent font-bold" : "bg-white/5 text-white/60 border-white/10 hover:text-white hover:bg-white/10"
+                }`}
+              >
+                <HelpCircle className="w-3 h-3" />
+                {isTvMode ? t.remoteMode : t.mouseMode}
+              </button>
 
-        </div>
+              {/* Global Language Dropdown */}
+              <div className="relative flex items-center gap-1 bg-white/5 border border-white/10 text-white/60 px-2.5 py-1.5 rounded-none text-[10px] font-mono">
+                <Globe className="w-3.5 h-3.5 text-cyber-accent" />
+                <select
+                  value={lang}
+                  onChange={(e) => {
+                    const nextLang = e.target.value as IPTVLanguage;
+                    setLang(nextLang);
+                    localStorage.setItem("iptv_lang", nextLang);
+                  }}
+                  className="bg-transparent outline-none cursor-pointer pr-1 text-white uppercase"
+                >
+                  <option value="TR" className="text-black">TR (Türkçe)</option>
+                  <option value="EN" className="text-black">EN (English)</option>
+                  <option value="DE" className="text-black">DE (Deutsch)</option>
+                  <option value="FR" className="text-black">FR (Français)</option>
+                  <option value="ES" className="text-black">ES (Español)</option>
+                </select>
+              </div>
 
-      </header>
+            </div>
 
-      {/* Security Toast Warning for Anti-cloning / Code protections (Item 18) */}
-      {securityToast && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 bg-red-950 border-2 border-red-500 text-red-200 px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-slide-in text-xs font-bold max-w-md text-center">
-          <AlertTriangle className="w-5 h-5 text-red-400 animate-ping flex-shrink-0" />
-          <span>{securityToast}</span>
-        </div>
-      )}
+          </header>
 
-      {/* Main Grid Workspace */}
-      <main className="max-w-[1600px] mx-auto p-6 relative z-10">
+          {/* Security Toast Warning for Anti-cloning / Code protections (Item 18) */}
+          {securityToast && (
+            <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 bg-red-950/90 border border-red-500 text-red-200 px-5 py-3 rounded-none shadow-2xl flex items-center gap-3 animate-slide-in text-xs font-mono max-w-md text-center backdrop-blur-md">
+              <AlertTriangle className="w-4 h-4 text-red-400 animate-ping flex-shrink-0" />
+              <span>{securityToast}</span>
+            </div>
+          )}
+
+          {/* Main Grid Workspace */}
+          <main className="max-w-[1600px] mx-auto p-6 relative z-10">
         
         {activeCategory === null ? (
           /* CASE 1: CATEGORIES DASHBOARD PAGE (SEKMELER TABLOSU) */
-          <div className="flex flex-col gap-6 animate-fade-in">
+          <div className="flex flex-col gap-6 animate-fade-in font-sans">
             {/* Dashboard Header with a Back button in the top left */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/40 pb-4 mb-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4 mb-2">
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleExitApp}
-                  className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 border border-slate-800 hover:border-cyan-500 text-slate-300 hover:text-white rounded-xl text-xs font-black transition duration-300 shadow-md cursor-pointer"
+                  className="flex items-center gap-2 px-3.5 py-2 bg-white/5 border border-white/10 hover:border-cyber-accent text-white hover:text-cyber-accent rounded-none text-[10px] font-mono uppercase tracking-wider transition duration-300 shadow-md cursor-pointer"
                   title="Uygulamadan Çık"
                 >
-                  <ArrowLeft className="w-4 h-4 text-cyan-400" />
-                  <span>Geri / Çıkış</span>
+                  <ArrowLeft className="w-3.5 h-3.5 text-cyber-accent" />
+                  <span>SYS_EXIT / TERMINATE</span>
                 </button>
                 <div>
-                  <h2 className="text-xl font-black tracking-wider text-white">Yayın Kategorileri</h2>
-                  <p className="text-xs text-slate-400 mt-0.5">İzlemek istediğiniz yayın türünü seçerek tüm listeyi alfabetik (A-Z) olarak listeleyin.</p>
+                  <h2 className="text-xl font-display font-black tracking-widest text-white uppercase">YAYIN_KATEGORİLERİ</h2>
+                  <p className="text-[10px] font-mono text-white/40 uppercase tracking-wider mt-0.5">SELECT_NODE_FOR_STREAM_BROADCAST_CATALOGUE</p>
                 </div>
               </div>
-              <span className="text-xs font-mono bg-slate-900/60 px-3 py-1 rounded text-cyan-400 border border-cyan-400/20 font-bold self-start sm:self-center">
-                TOPLAM YAYIN: {channels.length}
+              <span className="text-[10px] font-mono bg-black/60 px-3.5 py-1.5 text-cyber-accent border border-cyber-accent/20 font-bold self-start sm:self-center uppercase tracking-widest">
+                TOTAL_STREAMS: {channels.length}
               </span>
             </div>
 
@@ -883,31 +1050,34 @@ export default function App() {
                         setFocusedGridIdx(0);
                       }
                     }}
-                    className={`relative overflow-hidden rounded-2xl border p-5 flex flex-col justify-between text-left h-44 group transition-all duration-300 cursor-pointer ${
+                    className={`relative overflow-hidden rounded-none border p-5 flex flex-col justify-between text-left h-44 group transition-all duration-300 cursor-pointer ${
                       theme === "dark" 
-                        ? "bg-slate-900/60 border-slate-800/80 hover:border-cyan-400 hover:shadow-cyan-500/5 hover:shadow-xl hover:bg-slate-900" 
+                        ? "bg-cyber-bg/40 border-white/10 hover:border-cyber-accent hover:bg-black/85 hover:shadow-[0_0_15px_rgba(0,255,102,0.08)]" 
                         : "bg-white border-slate-200 hover:border-indigo-500 hover:shadow-indigo-500/5 hover:shadow-xl hover:bg-slate-50"
-                    } ${isFocused ? "border-cyan-400 border-4 scale-102 ring-4 ring-cyan-400/30" : ""}`}
+                    } ${isFocused ? "border-cyber-accent border-2 scale-102 ring-2 ring-cyber-accent/20" : ""}`}
                   >
-                    {/* Background decoration gradient */}
-                    <div className="absolute top-0 right-0 w-28 h-28 bg-gradient-to-br from-cyan-400/10 to-indigo-500/0 rounded-full blur-2xl group-hover:scale-125 transition-transform duration-500"></div>
+                    {/* Background decoration grid pattern */}
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-[radial-gradient(circle,rgba(0,255,102,0.05)_1px,transparent_1px)] bg-[size:12px_12px] group-hover:scale-110 transition-transform duration-500"></div>
 
-                    <div className="flex items-start justify-between">
-                      <div className="p-3 rounded-xl bg-slate-800 text-cyan-400 border border-slate-700/40 group-hover:text-white group-hover:bg-gradient-to-r group-hover:from-cyan-500 group-hover:to-indigo-600 transition-all duration-300 shadow">
-                        <IconComp className="w-5 h-5" />
+                    <div className="flex items-start justify-between relative z-10">
+                      <div className="p-2.5 rounded-none bg-white/5 text-cyber-accent border border-white/10 group-hover:text-black group-hover:bg-cyber-accent group-hover:border-cyber-accent transition-all duration-300 shadow">
+                        <IconComp className="w-4 h-4" />
                       </div>
                       {count !== undefined && (
-                        <span className="font-mono text-[10px] font-black bg-slate-950/60 px-2.5 py-1 rounded-full text-slate-400 border border-slate-800/40 group-hover:border-cyan-500/30">
-                          {count} {lang === "TR" ? "YAYIN" : "ITEMS"}
+                        <span className="font-mono text-[9px] font-bold bg-white/5 px-2 py-0.5 text-white/50 border border-white/10 group-hover:border-cyber-accent/30 uppercase tracking-widest">
+                          [{count} {lang === "TR" ? "YAYIN" : "ITEMS"}]
                         </span>
                       )}
                     </div>
 
-                    <div className="mt-4">
-                      <h3 className="font-extrabold text-sm tracking-wide text-white group-hover:text-cyan-400 transition-colors">
+                    <div className="mt-4 relative z-10">
+                      <div className="font-mono text-[9px] text-cyber-accent/60 mb-1">
+                        NODE_{String(idx + 1).padStart(2, '0')} // LOCAL_PORT
+                      </div>
+                      <h3 className="font-display font-extrabold text-sm tracking-widest text-white uppercase group-hover:text-cyber-accent transition-colors">
                         {cat.label}
                       </h3>
-                      <p className="text-[11px] opacity-60 mt-1 leading-relaxed text-slate-400 line-clamp-2">
+                      <p className="text-[10px] font-mono opacity-50 mt-1 leading-relaxed text-white line-clamp-2">
                         {getCategoryDescription(cat.id)}
                       </p>
                     </div>
@@ -917,38 +1087,38 @@ export default function App() {
             </div>
 
             {/* Info Metrics, Security & Autotarama Panels at the Bottom */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 border-t border-slate-800/40 pt-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 border-t border-white/10 pt-8">
               
               {/* SECURITY STATUS DISPLAY */}
-              <div className={`p-5 rounded-2xl border text-xs ${theme === "dark" ? "bg-slate-900/40 border-slate-800" : "bg-slate-100 border-slate-200"}`}>
-                <div className="flex items-center gap-2 font-bold mb-3">
-                  <ShieldCheck className="w-4 h-4 text-green-400" />
+              <div className={`p-5 rounded-none border border-white/10 text-xs bg-black/40 font-mono`}>
+                <div className="flex items-center gap-2 font-bold mb-3 font-display uppercase tracking-wider">
+                  <ShieldCheck className="w-4 h-4 text-cyber-accent" />
                   <span className="text-white">{t.securityShield}</span>
                 </div>
-                <p className="text-[11px] opacity-70 leading-relaxed mb-3 text-slate-400">
+                <p className="text-[10px] opacity-70 leading-relaxed mb-4 text-white uppercase tracking-wider">
                   {t.securityOk}
                 </p>
-                <div className="flex flex-col gap-1.5 font-mono text-[10px] text-indigo-400 bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                  <div>HOST: {license?.host || "Verified"}</div>
+                <div className="flex flex-col gap-1.5 font-mono text-[10px] text-cyber-accent bg-black/60 p-3 rounded-none border border-white/5">
+                  <div>HOST: {license?.host || "VERIFIED"}</div>
                   <div>VIOLATIONS BLOCKED: {securityViolations}</div>
-                  <div>ENCRYPTION: SHIELD-2026-v6</div>
+                  <div>ENCRYPTION: SHIELD_AES256_v6</div>
                 </div>
               </div>
 
               {/* DAILY SCAN AUTOMATIC DISCOVERY STATUS */}
-              <div className={`p-5 rounded-2xl border text-xs ${theme === "dark" ? "bg-slate-900/40 border-slate-800 shadow-lg shadow-cyan-500/5" : "bg-white border-slate-200 shadow-sm"}`}>
-                <div className="flex items-center gap-2 font-bold mb-3">
-                  <RefreshCw className={`w-4 h-4 text-cyan-400 ${isScanningPlaylists ? "animate-spin" : ""}`} />
-                  <span className="text-white">Otomatik Arama ve IPTV Güncelleme Veritabanı</span>
+              <div className={`p-5 rounded-none border border-white/10 text-xs bg-black/40 font-mono`}>
+                <div className="flex items-center gap-2 font-bold mb-3 font-display uppercase tracking-wider">
+                  <RefreshCw className={`w-4 h-4 text-cyber-accent ${isScanningPlaylists ? "animate-spin" : ""}`} />
+                  <span className="text-white">IPTV_CORE_ENGINE_SCANNER</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed mb-4">
+                <p className="text-[10px] text-white/50 leading-relaxed mb-4 uppercase tracking-wider">
                   Küresel kamu sunucularındaki ücretsiz m3u/m3u8 listeleri otomatik aranır, filtrelenir ve aynı isimdeki yayınlar akıllıca birleştirilir.
                 </p>
 
                 {/* Advanced Search Options */}
-                <div className="flex flex-col gap-3 mb-4 bg-slate-950/40 p-3.5 rounded-xl border border-slate-800/40">
+                <div className="flex flex-col gap-3 mb-4 bg-black/60 p-3.5 border border-white/5">
                   <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Arama Veritabanı Kaynağı</label>
+                    <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest">Arama Veritabanı Kaynağı</label>
                     <select
                       value={scanPreset}
                       onChange={(e) => {
@@ -958,37 +1128,37 @@ export default function App() {
                           setScanCustomUrl("");
                         }
                       }}
-                      className={`px-3 py-2 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                      className="px-3 py-2 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono"
                     >
-                      <option value="all">🌐 Tüm Küresel Sunucular (Google + Yandex + GitHub)</option>
-                      <option value="tr">🇹🇷 IPTV-Org Türkiye TV Paketi</option>
-                      <option value="world">🇺🇸 Free World TV Canlı Yayın Kataloğu</option>
-                      <option value="radio">📻 Türkiye Canlı Radyo & Müzik Listesi</option>
-                      <option value="custom">🔗 Özel M3U Havuzu (.m3u Linki Girin)</option>
+                      <option value="all" className="text-black bg-white">🌐 Tüm Küresel Sunucular (Google + Yandex + GitHub)</option>
+                      <option value="tr" className="text-black bg-white">🇹🇷 IPTV-Org Türkiye TV Paketi</option>
+                      <option value="world" className="text-black bg-white">🇺🇸 Free World TV Canlı Yayın Kataloğu</option>
+                      <option value="radio" className="text-black bg-white">📻 Türkiye Canlı Radyo & Müzik Listesi</option>
+                      <option value="custom" className="text-black bg-white">🔗 Özel M3U Havuzu (.m3u Linki Girin)</option>
                     </select>
                   </div>
 
                   {scanPreset === "custom" && (
                     <div className="flex flex-col gap-1 animate-fade-in">
-                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Özel M3U Akış Linki</label>
+                      <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest">Özel M3U Akış Linki</label>
                       <input
                         type="text"
                         placeholder="https://.../playlist.m3u"
                         value={scanCustomUrl}
                         onChange={(e) => setScanCustomUrl(e.target.value)}
-                        className={`px-3 py-2 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                        className="px-3 py-2 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono"
                       />
                     </div>
                   )}
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Kanal İsmi / Kelime Filtresi (İsteğe Bağlı)</label>
+                    <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest">Kanal İsmi / Kelime Filtresi (İsteğe Bağlı)</label>
                     <input
                       type="text"
                       placeholder="Örn: Spor, Haber, TRT, Music..."
                       value={scanKeyword}
                       onChange={(e) => setScanKeyword(e.target.value)}
-                      className={`px-3 py-2 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                      className="px-3 py-2 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono"
                     />
                   </div>
                 </div>
@@ -996,38 +1166,38 @@ export default function App() {
                 <button
                   onClick={handleForceAutoTarama}
                   disabled={isScanningPlaylists}
-                  className={`w-full py-2.5 px-4 rounded-xl font-bold tracking-wider text-[10px] uppercase transition duration-300 flex items-center justify-center gap-2 border cursor-pointer ${
+                  className={`w-full py-2.5 px-4 rounded-none font-mono font-bold tracking-widest text-[10px] uppercase transition duration-300 flex items-center justify-center gap-2 border cursor-pointer ${
                     isScanningPlaylists 
-                      ? "bg-cyan-500/10 border-cyan-400/30 text-cyan-400 animate-pulse" 
-                      : "bg-indigo-600/20 hover:bg-gradient-to-r hover:from-cyan-500 hover:to-indigo-600 hover:text-white hover:shadow-lg border-indigo-500/30 text-indigo-300"
+                      ? "bg-cyber-accent/15 border-cyber-accent text-cyber-accent animate-pulse" 
+                      : "bg-white/5 hover:bg-cyber-accent hover:text-black hover:border-cyber-accent border-white/10 text-white"
                   }`}
                 >
                   {isScanningPlaylists ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      Tarama ve Birleştirme Yapılıyor...
+                      SYS_SCANNING_AND_COMPILING_DIRECTORIES...
                     </>
                   ) : (
                     <>
                       <Sparkles className="w-3.5 h-3.5" />
-                      Veritabanında Ara & Kanalları Güncelle
+                      EXECUTE_DATABASE_SCAN_AND_UPDATE
                     </>
                   )}
                 </button>
 
                 {/* Scan Metrics Board */}
                 {scanStats && (
-                  <div className="mt-4 p-3 rounded-xl bg-slate-950/60 border border-cyan-400/10 flex flex-col gap-2 font-mono text-[10px] animate-fade-in text-slate-300">
-                    <div className="text-cyan-400 font-bold border-b border-white/5 pb-1 flex justify-between">
+                  <div className="mt-4 p-3 rounded-none bg-black/60 border border-cyber-accent/20 flex flex-col gap-2 font-mono text-[10px] animate-fade-in text-slate-300">
+                    <div className="text-cyber-accent font-bold border-b border-white/5 pb-1 flex justify-between">
                       <span>TARAMA ÖZETİ:</span>
-                      <span className="text-[9px] bg-cyan-400/10 px-1.5 py-0.5 rounded text-cyan-400 font-mono">BAŞARILI</span>
+                      <span className="text-[9px] bg-cyber-accent/10 px-1.5 py-0.5 rounded-none text-cyber-accent font-mono">SUCCESS_OK</span>
                     </div>
                     <div className="flex flex-col gap-1 border-b border-white/5 pb-2 text-[9px] text-slate-400">
                       <div className="font-sans font-bold text-slate-400">Aranan Motorlar:</div>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-white/5 text-slate-300 font-mono">www.google.com</span>
-                        <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-white/5 text-slate-300 font-mono">www.yandex.com</span>
-                        <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-white/5 text-slate-300 font-mono">www.github.com</span>
+                        <span className="px-1.5 py-0.5 rounded-none bg-black border border-white/5 text-slate-300 font-mono">www.google.com</span>
+                        <span className="px-1.5 py-0.5 rounded-none bg-black border border-white/5 text-slate-300 font-mono">www.yandex.com</span>
+                        <span className="px-1.5 py-0.5 rounded-none bg-black border border-white/5 text-slate-300 font-mono">www.github.com</span>
                       </div>
                     </div>
                     <div className="flex justify-between">
@@ -1053,20 +1223,20 @@ export default function App() {
             </div>
 
             {/* PWA INSTALL & HOME SCREEN SHORTCUT BANNER */}
-            <div className={`p-6 rounded-2xl border ${theme === "dark" ? "bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/20 border-slate-800 shadow-xl" : "bg-gradient-to-r from-white via-slate-50 to-cyan-50 border-slate-200 shadow"}`}>
+            <div className="p-6 rounded-none border border-white/10 bg-black/40 font-mono mt-8">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div className="flex items-start gap-4">
-                  <div className="p-3.5 rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex-shrink-0">
-                    <Monitor className="w-6 h-6 animate-pulse" />
+                  <div className="p-3 bg-white/5 text-cyber-accent border border-white/10 flex-shrink-0">
+                    <Monitor className="w-5 h-5 animate-pulse" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-black tracking-wide text-white flex items-center gap-2">
-                      Ana Ekrana Ekle & Masaüstü Kısayolu Oluştur
-                      <span className="text-[9px] font-bold bg-cyan-400/10 px-2 py-0.5 rounded-full text-cyan-400 border border-cyan-400/20">
-                        PWA Yükleyici
+                    <h3 className="text-sm font-display font-black tracking-widest text-white flex items-center gap-2 uppercase">
+                      LOCAL_SYSTEM_DEPLOYS
+                      <span className="text-[9px] font-bold bg-cyber-accent/10 px-2 py-0.5 text-cyber-accent border border-cyber-accent/20">
+                        PWA_INSTALLER
                       </span>
                     </h3>
-                    <p className="text-[11px] text-slate-400 leading-relaxed mt-1.5 max-w-3xl">
+                    <p className="text-[10px] text-white/50 leading-relaxed mt-1.5 max-w-3xl uppercase tracking-wider">
                       EFES IPTV PRO uygulamasını tarayıcınızdan bağımsız, tam ekran ve kesintisiz çalışacak şekilde doğrudan masaüstünüze veya mobil ana ekranınıza bir uygulama kısayolu olarak ekleyebilirsiniz. 
                       Ayrıca bilgisayarınıza yerel kurulum yaptıysanız, masaüstünüze otomatik kısayol oluşturulmuştur.
                     </p>
@@ -1076,62 +1246,71 @@ export default function App() {
                 <div className="flex flex-wrap gap-3 flex-shrink-0">
                   <button
                     onClick={handleInstallApp}
-                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-extrabold text-xs tracking-wide shadow-lg shadow-cyan-500/20 hover:scale-102 transition duration-300 flex items-center gap-2 cursor-pointer"
+                    className="px-5 py-2.5 rounded-none bg-cyber-accent text-black font-mono font-bold text-xs tracking-wider hover:bg-white hover:text-black transition duration-300 flex items-center gap-2 cursor-pointer uppercase"
                   >
                     <Download className="w-4 h-4" />
-                    <span>{deferredPrompt ? "Kısayolu Ana Ekrana Ekle" : "Uygulamayı Cihaza Yükle"}</span>
+                    <span>{deferredPrompt ? "INSTALL_SHORTCUT_EXEC" : "INSTALL_APP_EXEC"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowAndroidModal(true)}
+                    className="px-5 py-2.5 rounded-none bg-[#3DDC84] text-black font-mono font-bold text-xs tracking-wider hover:bg-white hover:text-black transition duration-300 flex items-center gap-2 cursor-pointer uppercase"
+                    title="Android Cihazlar ve Android TV için Akıllı Kurulum"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    <span>ANDROID_INSTALL_EXEC</span>
                   </button>
 
                   <button
                     onClick={() => setShowInstallHelp(!showInstallHelp)}
-                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/50 font-bold text-xs transition duration-300 flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-2.5 rounded-none bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 font-mono text-xs transition duration-300 flex items-center gap-1.5 cursor-pointer uppercase"
                   >
-                    <HelpCircle className="w-4 h-4 text-cyan-400" />
-                    <span>Nasıl Yapılır?</span>
+                    <HelpCircle className="w-4 h-4 text-cyber-accent" />
+                    <span>HOW_TO_GUIDE</span>
                   </button>
                 </div>
               </div>
 
               {/* Install guide inline expansion */}
               {showInstallHelp && (
-                <div className="mt-5 pt-5 border-t border-slate-800/60 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs animate-fade-in">
-                  <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5">
-                    <h4 className="font-extrabold text-cyan-400 flex items-center gap-1.5 mb-2">
+                <div className="mt-5 pt-5 border-t border-white/10 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs animate-fade-in uppercase tracking-wider">
+                  <div className="p-4 rounded-none bg-black/60 border border-white/5">
+                    <h4 className="font-bold text-cyber-accent flex items-center gap-1.5 mb-2 font-display">
                       <Monitor className="w-4 h-4" />
-                      1. Bilgisayar (Chrome/Edge/Opera)
+                      01. CHROME / EDGE / OPERA (DESKTOP)
                     </h4>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Adres çubuğunun sağ tarafındaki <strong className="text-white">"Yükle" (ikonu aşağı ok olan monitör)</strong> düğmesine tıklayın ya da tarayıcı menüsünden <strong className="text-white">"Efes IPTV Pro Uygulamasını Yükle"</strong> seçeneğini seçin. Kısayol masaüstünüze eklenecektir.
+                    <p className="text-[10px] text-white/40 leading-relaxed">
+                      Adres çubuğunun sağ tarafındaki "Yükle" düğmesine tıklayın ya da tarayıcı menüsünden "Efes IPTV Pro Uygulamasını Yükle" seçeneğini seçin. Kısayol masaüstünüze eklenecektir.
                     </p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5">
-                    <h4 className="font-extrabold text-indigo-400 flex items-center gap-1.5 mb-2">
+                  <div className="p-4 rounded-none bg-black/60 border border-white/5">
+                    <h4 className="font-bold text-cyber-accent flex items-center gap-1.5 mb-2 font-display">
                       <Smartphone className="w-4 h-4" />
-                      2. Mobil Cihazlar (iOS / Android)
+                      02. SMARTPHONES (IOS / ANDROID)
                     </h4>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      <strong className="text-white">Safari (iOS):</strong> Paylaş butonuna basıp <strong className="text-white">"Ana Ekrana Ekle"</strong> seçeneğini seçin. <br />
-                      <strong className="text-white">Chrome (Android):</strong> Sağ üstteki üç noktaya tıklayıp <strong className="text-white">"Uygulamayı Yükle"</strong> veya <strong className="text-white">"Ana Ekrana Ekle"</strong> seçeneğine tıklayın.
+                    <p className="text-[10px] text-white/40 leading-relaxed">
+                      Safari (iOS): Paylaş butonuna basıp "Ana Ekrana Ekle" seçeneğini seçin. <br />
+                      Chrome (Android): Sağ üstteki üç noktaya tıklayıp "Uygulamayı Yükle" veya "Ana Ekrana Ekle" seçeneğine tıklayın.
                     </p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5">
-                    <h4 className="font-extrabold text-amber-400 flex items-center gap-1.5 mb-2">
+                  <div className="p-4 rounded-none bg-black/60 border border-white/5">
+                    <h4 className="font-bold text-cyber-accent flex items-center gap-1.5 mb-2 font-display">
                       <CheckCircle className="w-4 h-4" />
-                      3. Yerel Çevrimdışı Kurulum
+                      03. LOCAL OFFLINE COMMANDS
                     </h4>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Yerel sunucu kurulum betiğini (<code className="text-white bg-slate-900 px-1 py-0.5 rounded">kurulum_windows.bat</code> veya <code className="text-white bg-slate-900 px-1 py-0.5 rounded">kurulum_linux_macos.sh</code>) çalıştırdıktan sonra, masaüstünüze otomatik olarak <strong className="text-white">EFES IPTV PRO</strong> kısayolu oluşturulur.
+                    <p className="text-[10px] text-white/40 leading-relaxed">
+                      Yerel sunucu kurulum betiğini (kurulum_windows.bat veya kurulum_linux_macos.sh) çalıştırdıktan sonra, masaüstünüze otomatik olarak EFES IPTV PRO kısayolu oluşturulur.
                     </p>
                   </div>
 
                   <div className="col-span-1 md:col-span-3 flex justify-end">
                     <button
                       onClick={() => setShowInstallHelp(false)}
-                      className="text-[10px] text-slate-400 hover:text-white underline font-bold mt-2 cursor-pointer"
+                      className="text-[10px] text-cyber-accent hover:text-white underline mt-2 cursor-pointer"
                     >
-                      Kılavuzu Kapat
+                      CLOSE_INSTALLATION_GUIDE
                     </button>
                   </div>
                 </div>
@@ -1141,49 +1320,49 @@ export default function App() {
           </div>
         ) : (
           /* CASE 2: DETAILED OPENED CATEGORY VIEW (YENİ AÇILAN SAYFA) */
-          <div className="flex flex-col gap-6 animate-fade-in">
+          <div className="flex flex-col gap-6 animate-fade-in font-sans">
             
             {/* Category Detail Header with a Geri (Back) button at the top left */}
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/40 pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setActiveCategory(null)}
-                  className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 border border-slate-800 hover:border-cyan-400 text-slate-300 hover:text-white rounded-xl text-xs font-black transition duration-300 shadow-md cursor-pointer"
+                  className="flex items-center gap-2 px-3.5 py-2 bg-white/5 border border-white/10 hover:border-cyber-accent text-white hover:text-cyber-accent rounded-none text-[10px] font-mono uppercase tracking-wider transition duration-300 shadow-md cursor-pointer"
                   title="Kategorilere Dön"
                 >
-                  <ArrowLeft className="w-4 h-4 text-cyan-400" />
-                  <span>Geri Dön</span>
+                  <ArrowLeft className="w-3.5 h-3.5 text-cyber-accent" />
+                  <span>SYS_NAV_BACK</span>
                 </button>
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-slate-800 rounded-xl border border-slate-700 text-cyan-400">
+                  <div className="p-2 bg-white/5 rounded-none border border-white/10 text-cyber-accent">
                     {(() => {
                       const Icon = categoriesList.find(c => c.id === activeCategory)?.icon || Tv2;
-                      return <Icon className="w-5 h-5" />;
+                      return <Icon className="w-4 h-4" />;
                     })()}
                   </div>
                   <div>
-                    <h2 className="text-lg font-black tracking-wide text-white">
+                    <h2 className="text-base font-display font-black tracking-widest text-white uppercase">
                       {categoriesList.find(c => c.id === activeCategory)?.label || t.allCategories}
                     </h2>
-                    <p className="text-[11px] text-slate-400 mt-0.5 leading-none">
+                    <p className="text-[10px] font-mono text-white/40 mt-0.5 uppercase tracking-wider leading-none">
                       {getCategoryDescription(activeCategory)}
                     </p>
                   </div>
                 </div>
               </div>
-              <span className="text-xs font-mono bg-slate-900/60 px-3 py-1.5 rounded-xl text-slate-400 border border-slate-800">
-                KANAL SAYISI: {filteredChannels.length}
+              <span className="text-[10px] font-mono bg-black/60 px-3.5 py-1.5 text-cyber-accent border border-cyber-accent/20 font-bold self-start uppercase tracking-widest">
+                STREAM_NODES: {filteredChannels.length}
               </span>
             </div>
 
             {/* Custom List M3U Loading Panel (If active category is CustomPlaylist) */}
             {activeCategory === "CustomPlaylist" && (
-              <div className={`p-6 rounded-2xl border ${theme === "dark" ? "bg-slate-900/80 border-slate-800" : "bg-white border-slate-200"}`}>
-                <h3 className="text-base font-black tracking-wide mb-2 flex items-center gap-2 text-white">
-                  <PlusCircle className="w-5 h-5 text-cyan-400" />
+              <div className="p-6 rounded-none border border-white/10 bg-black/40 font-mono">
+                <h3 className="text-sm font-display font-black tracking-widest mb-2 flex items-center gap-2 text-white uppercase">
+                  <PlusCircle className="w-4 h-4 text-cyber-accent" />
                   {t.m3uUploadTitle}
                 </h3>
-                <p className="text-xs opacity-60 text-slate-400 mb-4">
+                <p className="text-[10px] opacity-60 text-white mb-4 uppercase tracking-wider">
                   Kendi IPTV sağlayıcınızdan aldığınız .m3u bağlantısını yapıştırabilir veya cihazınızdan .m3u uzantılı dosya seçip yükleyebilirsiniz.
                 </p>
                 
@@ -1193,21 +1372,21 @@ export default function App() {
                     placeholder={t.m3uPlaceholder}
                     value={customM3uUrl}
                     onChange={(e) => setCustomM3uUrl(e.target.value)}
-                    className={`flex-1 px-4 py-2.5 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                    className="flex-1 px-4 py-2.5 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
                   />
                   <button
                     onClick={handleLoadCustomM3uUrl}
-                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-extrabold tracking-wide text-xs transition shadow-lg shadow-cyan-500/10 cursor-pointer"
+                    className="px-5 py-2.5 rounded-none bg-cyber-accent text-black font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-white cursor-pointer uppercase"
                   >
                     {t.m3uLoadBtn}
                   </button>
                 </div>
 
-                <div className="flex items-center gap-4 mt-4 border-t border-slate-800/40 pt-4">
-                  <span className="text-xs text-slate-400 font-bold">{t.m3uFileBtn}:</span>
-                  <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] uppercase tracking-wider py-2 px-4 rounded-xl transition border border-white/5 flex items-center gap-1.5">
-                    <Upload className="w-3.5 h-3.5" />
-                    M3U Dosyası Yükle
+                <div className="flex items-center gap-4 mt-4 border-t border-white/5 pt-4">
+                  <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{t.m3uFileBtn}:</span>
+                  <label className="cursor-pointer bg-white/5 hover:bg-white/10 text-white font-mono font-bold text-[9px] uppercase tracking-wider py-2 px-4 border border-white/10 transition flex items-center gap-1.5">
+                    <Upload className="w-3.5 h-3.5 text-cyber-accent" />
+                    SELECT_M3U_FILE
                     <input
                       type="file"
                       accept=".m3u"
@@ -1221,38 +1400,38 @@ export default function App() {
 
             {/* Admin Panel Panel (If active category is AdminPanel) */}
             {activeCategory === "AdminPanel" && (
-              <div className={`p-6 rounded-2xl border ${theme === "dark" ? "bg-slate-900/80 border-slate-800" : "bg-white border-slate-200"}`}>
-                <div className="flex justify-between items-center border-b border-slate-800/40 pb-4 mb-6">
-                  <h3 className="text-base font-black tracking-wide flex items-center gap-2 text-white">
-                    <ShieldAlert className="w-5 h-5 text-indigo-400" />
+              <div className="p-6 rounded-none border border-white/10 bg-black/40 font-mono">
+                <div className="flex justify-between items-center border-b border-white/5 pb-4 mb-6">
+                  <h3 className="text-sm font-display font-black tracking-widest flex items-center gap-2 text-white uppercase">
+                    <ShieldAlert className="w-4 h-4 text-cyber-accent" />
                     {t.adminPanel}
                   </h3>
                   {adminToken && (
                     <button
                       onClick={handleAdminLogout}
-                      className="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-300 font-bold text-xs transition border border-red-500/20 cursor-pointer"
+                      className="px-3 py-1.5 rounded-none bg-red-600/10 hover:bg-red-600 hover:text-white border border-red-500/20 text-red-400 font-mono text-[10px] tracking-widest uppercase transition duration-300 cursor-pointer"
                     >
-                      Güvenli Çıkış (Logout)
+                      SYS_LOGOUT / REVOKE_TOKEN
                     </button>
                   )}
                 </div>
 
                 {adminError && (
-                  <div className="p-3 mb-4 rounded-xl bg-red-950/40 border border-red-500/30 text-red-400 text-xs font-bold">
+                  <div className="p-3 mb-4 rounded-none bg-red-950/40 border border-red-500/30 text-red-400 text-xs font-bold uppercase">
                     {adminError}
                   </div>
                 )}
                 {adminSuccess && (
-                  <div className="p-3 mb-4 rounded-xl bg-green-950/40 border border-green-500/30 text-green-400 text-xs font-bold">
+                  <div className="p-3 mb-4 rounded-none bg-green-950/40 border border-green-500/30 text-green-400 text-xs font-bold uppercase">
                     {adminSuccess}
                   </div>
                 )}
 
                 {!adminToken ? (
-                  <form onSubmit={handleAdminLogin} className="max-w-md mx-auto py-8 text-center">
-                    <Lock className="w-12 h-12 mx-auto text-indigo-400 mb-4 animate-bounce" />
-                    <h4 className="text-sm font-black mb-2 text-white">{t.adminPinPrompt}</h4>
-                    <p className="text-[11px] text-slate-400 mb-6">
+                  <form onSubmit={handleAdminLogin} className="max-w-md mx-auto py-8 text-center uppercase">
+                    <Lock className="w-10 h-10 mx-auto text-cyber-accent mb-4 animate-bounce" />
+                    <h4 className="text-xs font-bold tracking-widest mb-2 text-white">{t.adminPinPrompt}</h4>
+                    <p className="text-[10px] text-white/40 mb-6 leading-relaxed">
                       Yayın eklemek, silmek ve genel güncellemeleri yönetmek için yönetici şifrenizi (Varsayılan: evim1234) giriniz.
                     </p>
                     
@@ -1263,25 +1442,26 @@ export default function App() {
                         placeholder="••••"
                         value={adminPinInput}
                         onChange={(e) => setAdminPinInput(e.target.value)}
-                        className={`text-center tracking-widest text-lg font-black px-4 py-3 rounded-xl outline-none transition ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                        className="text-center tracking-widest text-lg font-black px-4 py-3 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono"
                       />
                       <button
                         type="submit"
-                        className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-extrabold tracking-wide text-xs transition shadow-lg shadow-cyan-500/10 cursor-pointer"
+                        className="w-full py-3 rounded-none bg-cyber-accent text-black font-mono font-bold tracking-widest text-xs transition duration-300 hover:bg-white cursor-pointer"
                       >
                         {t.adminLoginBtn}
                       </button>
                     </div>
                   </form>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     {/* LEFT: ADD/EDIT STREAM FORM */}
                     <div className="flex flex-col gap-4">
-                      <h4 className="text-xs font-extrabold text-cyan-400 tracking-wider uppercase flex items-center gap-1.5">
+                      <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 font-display">
                         {editingChannelId ? (
                           <>
                             <Edit className="w-4 h-4 animate-pulse" />
-                            <span>Kanalı Düzenle & Güncelle</span>
+                            <span>SYS_UPDATE_STREAM</span>
                           </>
                         ) : (
                           <>
@@ -1291,49 +1471,49 @@ export default function App() {
                         )}
                       </h4>
                       
-                      <form onSubmit={editingChannelId ? handleAdminUpdateChannel : handleAdminAddChannel} className="flex flex-col gap-3 text-xs">
+                      <form onSubmit={editingChannelId ? handleAdminUpdateChannel : handleAdminAddChannel} className="flex flex-col gap-3 text-xs uppercase">
                         <div className="flex flex-col gap-1">
-                          <label className="text-slate-400 font-bold">{t.adminChannelName} *</label>
+                          <label className="text-white/40 font-bold tracking-widest text-[9px]">{t.adminChannelName} *</label>
                           <input
                             type="text"
                             required
                             placeholder="Örn: TRT 1 HD"
                             value={addChannelName}
                             onChange={(e) => setAddChannelName(e.target.value)}
-                            className={`px-3 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200"}`}
+                            className="px-3 py-2 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
                           />
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-slate-400 font-bold">{t.adminChannelUrl} *</label>
+                          <label className="text-white/40 font-bold tracking-widest text-[9px]">{t.adminChannelUrl} *</label>
                           <input
                             type="text"
                             required
                             placeholder="https://.../master.m3u8"
                             value={addChannelUrl}
                             onChange={(e) => setAddChannelUrl(e.target.value)}
-                            className={`px-3 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200"}`}
+                            className="px-3 py-2 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
                           />
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-slate-400 font-bold">{t.adminChannelLogo}</label>
+                          <label className="text-white/40 font-bold tracking-widest text-[9px]">{t.adminChannelLogo}</label>
                           <input
                             type="text"
                             placeholder="https://.../logo.png"
                             value={addChannelLogo}
                             onChange={(e) => setAddChannelLogo(e.target.value)}
-                            className={`px-3 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200"}`}
+                            className="px-3 py-2 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
                           />
                         </div>
 
                         <div className="grid grid-cols-3 gap-2">
                           <div className="flex flex-col gap-1">
-                            <label className="text-slate-400 font-bold">{t.adminChannelCategory}</label>
+                            <label className="text-white/40 font-bold tracking-widest text-[9px]">{t.adminChannelCategory}</label>
                             <select
                               value={addChannelCategory}
                               onChange={(e) => setAddChannelCategory(e.target.value)}
-                              className={`px-2 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200 text-slate-900"}`}
+                              className="px-2 py-2 rounded-none outline-none bg-black border border-white/10 text-white focus:border-cyber-accent font-mono"
                             >
                               <option value="National">National</option>
                               <option value="Premium">Premium</option>
@@ -1347,11 +1527,11 @@ export default function App() {
                           </div>
 
                           <div className="flex flex-col gap-1">
-                            <label className="text-slate-400 font-bold">Dil (Lang)</label>
+                            <label className="text-white/40 font-bold tracking-widest text-[9px]">DİL (LANG)</label>
                             <select
                               value={addChannelLanguage}
                               onChange={(e) => setAddChannelLanguage(e.target.value)}
-                              className={`px-2 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200 text-slate-900"}`}
+                              className="px-2 py-2 rounded-none outline-none bg-black border border-white/10 text-white focus:border-cyber-accent font-mono"
                             >
                               <option value="TR">TR</option>
                               <option value="EN">EN</option>
@@ -1362,11 +1542,11 @@ export default function App() {
                           </div>
 
                           <div className="flex flex-col gap-1">
-                            <label className="text-slate-400 font-bold">Tür (Type)</label>
+                            <label className="text-white/40 font-bold tracking-widest text-[9px]">TÜR (TYPE)</label>
                             <select
                               value={addChannelType}
                               onChange={(e) => setAddChannelType(e.target.value as any)}
-                              className={`px-2 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200 text-slate-900"}`}
+                              className="px-2 py-2 rounded-none outline-none bg-black border border-white/10 text-white focus:border-cyber-accent font-mono"
                             >
                               <option value="live">Live TV</option>
                               <option value="movie">Movie</option>
@@ -1377,20 +1557,20 @@ export default function App() {
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-slate-400 font-bold">{t.adminChannelDesc}</label>
+                          <label className="text-white/40 font-bold tracking-widest text-[9px]">{t.adminChannelDesc}</label>
                           <textarea
                             placeholder="Yayına dair ek bilgiler, program açıklaması..."
                             value={addChannelDesc}
                             onChange={(e) => setAddChannelDesc(e.target.value)}
                             rows={2}
-                            className={`px-3 py-2 rounded-xl outline-none resize-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200"}`}
+                            className="px-3 py-2 rounded-none outline-none resize-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
                           />
                         </div>
 
                         <div className="flex gap-2 mt-2">
                           <button
                             type="submit"
-                            className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-extrabold tracking-wide text-xs transition shadow-lg shadow-cyan-500/10 cursor-pointer"
+                            className="flex-1 py-2.5 rounded-none bg-cyber-accent text-black font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-white cursor-pointer"
                           >
                             {editingChannelId ? "Değişiklikleri Kaydet" : t.adminAddChannel}
                           </button>
@@ -1406,7 +1586,7 @@ export default function App() {
                                 setAdminSuccess("");
                                 setAdminError("");
                               }}
-                              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+                              className="px-4 py-2.5 rounded-none bg-white/5 hover:bg-white/10 text-white font-mono font-bold text-xs transition border border-white/10 cursor-pointer"
                             >
                               İptal
                             </button>
@@ -1417,39 +1597,39 @@ export default function App() {
 
                     {/* RIGHT: PIN MANAGER & CURRENT CHANNELS DELETE LIST */}
                     <div className="flex flex-col gap-6">
-                      <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/40">
-                        <h4 className="text-xs font-extrabold text-indigo-400 tracking-wider uppercase flex items-center gap-1.5 mb-3">
+                      <div className="p-4 rounded-none border border-white/10 bg-black/60">
+                        <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 mb-3 font-display">
                           <Settings className="w-4 h-4" />
                           {t.adminChangePin}
                         </h4>
-                        <form onSubmit={handleAdminChangePin} className="flex flex-col gap-3 text-xs">
+                        <form onSubmit={handleAdminChangePin} className="flex flex-col gap-3 text-xs uppercase">
                           <div className="grid grid-cols-2 gap-2">
                             <div className="flex flex-col gap-1">
-                              <label className="text-slate-400 font-bold">Mevcut Şifre</label>
+                              <label className="text-white/40 font-bold tracking-widest text-[9px]">Mevcut Şifre</label>
                               <input
                                 type="password"
                                 required
                                 placeholder="••••"
                                 value={currentPinInput}
                                 onChange={(e) => setCurrentPinInput(e.target.value)}
-                                className={`px-3 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200"}`}
+                                className="px-3 py-2 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono"
                               />
                             </div>
                             <div className="flex flex-col gap-1">
-                              <label className="text-slate-400 font-bold">Yeni Şifre</label>
+                              <label className="text-white/40 font-bold tracking-widest text-[9px]">Yeni Şifre</label>
                               <input
                                 type="password"
                                 required
                                 placeholder="••••"
                                 value={newPinInput}
                                 onChange={(e) => setNewPinInput(e.target.value)}
-                                className={`px-3 py-2 rounded-xl outline-none ${theme === "dark" ? "bg-slate-950 border border-slate-800 text-white" : "bg-slate-100 border border-slate-200"}`}
+                                className="px-3 py-2 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono"
                               />
                             </div>
                           </div>
                           <button
                             type="submit"
-                            className="py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold tracking-wide transition border border-white/5 cursor-pointer"
+                            className="py-2 rounded-none bg-white/5 hover:bg-white/10 text-white font-mono font-bold tracking-widest transition border border-white/10 cursor-pointer"
                           >
                             {t.adminSavePin}
                           </button>
@@ -1457,21 +1637,21 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-col gap-3">
-                        <h4 className="text-xs font-extrabold text-red-400 tracking-wider uppercase">
+                        <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase font-display">
                           Yayın Listesi ve Genel Güncelleme ({channels.length})
                         </h4>
-                        <p className="text-[10px] opacity-60">
+                        <p className="text-[10px] text-white/40 uppercase tracking-wider">
                           Aşağıdaki listeden dilediğiniz yayını tek tıkla sistemden kaldırabilirsiniz.
                         </p>
                         
-                        <div className="max-h-64 overflow-y-auto border border-slate-800 rounded-xl bg-slate-950/30 p-2 flex flex-col gap-1.5">
+                        <div className="max-h-64 overflow-y-auto border border-white/10 bg-black/40 p-2 flex flex-col gap-1.5">
                           {channels.map((c) => (
-                            <div key={c.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-800/40 text-xs">
+                            <div key={c.id} className="flex items-center justify-between p-2 rounded-none bg-black/40 border border-white/5 text-xs">
                               <div className="flex items-center gap-2 overflow-hidden mr-2">
-                                <img src={c.logo} className="w-6 h-6 rounded object-cover bg-slate-800 flex-shrink-0" alt="" />
+                                <img src={c.logo} className="w-6 h-6 rounded-none object-cover bg-black border border-white/10 flex-shrink-0" alt="" />
                                 <div className="overflow-hidden">
-                                  <span className="font-bold truncate block text-white">{c.name}</span>
-                                  <span className="text-[9px] opacity-50 block">{c.category} • {c.type}</span>
+                                  <span className="font-bold truncate block text-white uppercase text-[10px]">{c.name}</span>
+                                  <span className="text-[8px] text-white/40 block font-mono uppercase tracking-wider">{c.category} • {c.type}</span>
                                 </div>
                               </div>
                               <div className="flex gap-1.5">
@@ -1487,17 +1667,17 @@ export default function App() {
                                     setAddChannelDesc(c.description || "");
                                     setAdminSuccess(`"${c.name}" kanalı düzenleme formuna yüklendi.`);
                                   }}
-                                  className="p-1.5 rounded-lg bg-cyan-600/10 hover:bg-cyan-500 hover:text-black text-cyan-400 transition cursor-pointer"
+                                  className="p-1.5 bg-white/5 hover:bg-cyber-accent text-white hover:text-black transition border border-white/10 cursor-pointer"
                                   title="Düzenle"
                                 >
-                                  <Edit className="w-3.5 h-3.5" />
+                                  <Edit className="w-3 h-3" />
                                 </button>
                                 <button
                                   onClick={() => handleAdminDeleteChannel(c.id)}
-                                  className="p-1.5 rounded-lg bg-red-600/10 hover:bg-red-600 hover:text-white text-red-400 transition cursor-pointer"
+                                  className="p-1.5 bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white transition border border-red-500/20 cursor-pointer"
                                   title={t.adminDeleteChannel}
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-3 h-3" />
                                 </button>
                               </div>
                             </div>
@@ -1506,7 +1686,114 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                )}
+
+                  {/* BOTTOM: SYSTEM UPDATER & TURKISH CHANNELS SYNC PANELS */}
+                  <div className="mt-8 border-t border-white/10 pt-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Panel 1: Turksat Stream Dynamic Auto-Updater */}
+                    <div className="p-4 rounded-none border border-white/10 bg-black/60 flex flex-col justify-between">
+                      <div>
+                        <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 mb-2 font-display">
+                          <RefreshCw className={`w-4 h-4 ${isUpdatingTurkish ? "animate-spin" : ""}`} />
+                          TÜRKSAT YAYINLARINI İNTERNETTEN GÜNCELLE
+                        </h4>
+                        <p className="text-[10px] text-white/40 mb-4 leading-relaxed uppercase tracking-wider font-mono">
+                          Bu özellik, internetteki en güncel ve çalışan kamu oynatma listelerinden (iptv-org vb.) yeni çalışan akış adreslerini çeker ve veritabanınızdaki mevcut TR kanallarıyla otomatik eşleştirerek günceller.
+                        </p>
+                      </div>
+                      <div>
+                        {turkishUpdateResult && (
+                          <div className="p-2.5 mb-3 rounded-none bg-white/5 border border-white/10 text-[9px] font-mono text-white/80 uppercase leading-relaxed">
+                            {turkishUpdateResult}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isUpdatingTurkish}
+                          onClick={handleUpdateTurkishChannels}
+                          className={`w-full py-2.5 rounded-none font-mono font-bold tracking-widest text-xs transition duration-300 flex items-center justify-center gap-2 cursor-pointer ${
+                            isUpdatingTurkish 
+                              ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5" 
+                              : "bg-cyber-accent text-black hover:bg-white"
+                          }`}
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingTurkish ? "animate-spin" : ""}`} />
+                          {isUpdatingTurkish ? "GÜNCELLENİYOR..." : "YAYIN ADRESLERİNİ GÜNCELLE"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Panel 2: System Version Upgrade & Code Overwriter */}
+                    <div className="p-4 rounded-none border border-white/10 bg-black/60">
+                      <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 mb-2 font-display">
+                        <Upload className="w-4 h-4" />
+                        SİSTEM SÜRÜMÜ GÜNCELLEME VE DOSYA YAZMA
+                      </h4>
+                      <p className="text-[10px] text-white/40 mb-4 leading-relaxed uppercase tracking-wider font-mono">
+                        Uygulamanın yeni bir sürümü geldiğinde, sürüm dosyalarını (.zip veya tekil kod dosyası olarak) yükleyip mevcut sürümün üzerine yazabilirsiniz.
+                      </p>
+
+                      <div className="flex flex-col gap-4 text-xs">
+                        {/* ZIP Overwrite */}
+                        <div className="border-b border-white/5 pb-3">
+                          <label className="text-white/40 font-bold tracking-widest text-[9px] block mb-1.5 font-mono">SÜRÜM GÜNCELLEME (.ZIP YÜKLE)</label>
+                          <div className="relative">
+                            <input
+                              type="file"
+                              accept=".zip"
+                              disabled={isUpgradingZip}
+                              onChange={handleUpgradeZip}
+                              className="w-full text-[10px] font-mono text-white/50 file:mr-3 file:py-1.5 file:px-3 file:rounded-none file:border-0 file:text-[9px] file:font-bold file:tracking-widest file:uppercase file:bg-white/10 file:text-white file:cursor-pointer hover:file:bg-white/20"
+                            />
+                          </div>
+                          {upgradeZipResult && (
+                            <div className="mt-2 p-2 rounded-none bg-white/5 border border-white/10 text-[9px] font-mono text-white/80 uppercase leading-relaxed">
+                              {upgradeZipResult}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Individual File Overwrite */}
+                        <div>
+                          <label className="text-white/40 font-bold tracking-widest text-[9px] block mb-1 font-mono">TEK DOSYA ÜZERİNE YAZ</label>
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="text"
+                              placeholder="Örn: src/App.tsx veya server.ts"
+                              value={upgradeFilePath}
+                              onChange={(e) => setUpgradeFilePath(e.target.value)}
+                              className="px-3 py-1.5 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25 text-[10px]"
+                            />
+                            <textarea
+                              placeholder="Yeni dosya içeriği (kod) buraya yapıştırılmalıdır..."
+                              value={upgradeFileContent}
+                              onChange={(e) => setUpgradeFileContent(e.target.value)}
+                              rows={3}
+                              className="px-3 py-1.5 rounded-none outline-none resize-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25 text-[10px]"
+                            />
+                            <button
+                              type="button"
+                              disabled={isUpgradingFile}
+                              onClick={handleUpgradeFile}
+                              className={`w-full py-2 rounded-none font-mono font-bold tracking-widest text-[10px] transition duration-300 cursor-pointer ${
+                                isUpgradingFile 
+                                  ? "bg-white/10 text-white/40 cursor-not-allowed" 
+                                  : "bg-white text-black hover:bg-cyber-accent"
+                              }`}
+                            >
+                              {isUpgradingFile ? "YAZILIYOR..." : "KODU DOSYANIN ÜZERİNE YAZ"}
+                            </button>
+                          </div>
+                          {upgradeFileResult && (
+                            <div className="mt-2 p-2 rounded-none bg-white/5 border border-white/10 text-[9px] font-mono text-white/80 uppercase leading-relaxed">
+                              {upgradeFileResult}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
               </div>
             )}
 
@@ -1514,10 +1801,10 @@ export default function App() {
             {activeCategory !== "AdminPanel" && (
               <div>
                 {filteredChannels.length === 0 ? (
-                  <div className="text-center py-20 bg-slate-900/20 border border-dashed border-slate-800 rounded-3xl p-6">
-                    <Tv className="w-12 h-12 mx-auto text-slate-600 mb-4 animate-bounce" />
-                    <h4 className="text-base font-black mb-1">Kanal Listesi Boş</h4>
-                    <p className="text-xs text-slate-400">
+                  <div className="text-center py-20 bg-black/40 border border-dashed border-white/10 rounded-none p-6 font-mono uppercase tracking-wider">
+                    <Tv className="w-10 h-10 mx-auto text-white/30 mb-4 animate-pulse" />
+                    <h4 className="text-xs font-bold mb-1 text-white">STREAM_NODE_EMPTY</h4>
+                    <p className="text-[10px] text-white/40">
                       Bu kategoride kanal bulunamadı veya aramanızla eşleşen sonuç yok.
                     </p>
                   </div>
@@ -1538,65 +1825,63 @@ export default function App() {
                             }
                             handlePlayChannel(chan);
                           }}
-                          className={`relative rounded-2xl overflow-hidden border cursor-pointer group transition-all duration-300 flex flex-col justify-between ${
-                            theme === "dark" ? "bg-slate-900/80 border-slate-800 hover:border-cyan-400" : "bg-white border-slate-200 hover:border-indigo-500"
-                          } ${isFocused ? "border-cyan-400 border-4 scale-102 ring-4 ring-cyan-400/30" : ""}`}
+                          className={`relative rounded-none overflow-hidden border cursor-pointer group transition-all duration-300 flex flex-col justify-between bg-black/40 border-white/10 hover:border-cyber-accent ${isFocused ? "border-cyber-accent ring-4 ring-cyber-accent/30 scale-102" : ""}`}
                         >
                           {/* Logo and Image Area */}
-                          <div className="relative aspect-video w-full bg-slate-950/80 overflow-hidden">
+                          <div className="relative aspect-video w-full bg-black overflow-hidden border-b border-white/5">
                             <img
                               src={chan.logo}
                               className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
                               alt={chan.name}
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+                            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-80"></div>
                             
                             {/* Type Badge */}
-                            <span className="absolute top-2 left-2 text-[8px] font-black tracking-widest uppercase bg-cyan-400 text-black px-2 py-0.5 rounded shadow">
+                            <span className="absolute top-2 left-2 text-[8px] font-mono font-black tracking-widest uppercase bg-cyber-accent text-black px-1.5 py-0.5 shadow">
                               {chan.type}
                             </span>
 
                             {/* Language Badge */}
-                            <span className="absolute top-2 right-2 text-[8px] font-bold bg-slate-950/80 text-white px-1.5 py-0.5 rounded">
+                            <span className="absolute top-2 right-2 text-[8px] font-mono font-bold bg-black text-white px-1.5 py-0.5 border border-white/10">
                               {chan.language}
                             </span>
 
                             {/* Continue watching indicator */}
                             {hasSavedPos && (
-                              <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-0.5 bg-indigo-600 text-[9px] font-bold text-white rounded">
+                              <div className="absolute bottom-2 left-2 flex items-center gap-1 px-1.5 py-0.5 bg-cyber-accent text-[8px] font-mono font-bold text-black uppercase">
                                 <Clock className="w-2.5 h-2.5" />
-                                <span>Devam Et</span>
+                                <span>CONTINUE</span>
                               </div>
                             )}
 
                             {/* Favorite Button */}
                             <button
                               onClick={(e) => toggleFavorite(chan.id, e)}
-                              className={`absolute bottom-2 right-2 p-1.5 rounded-full transition ${
-                                isFav ? "bg-red-500 text-white" : "bg-black/50 hover:bg-black/80 text-white"
+                              className={`absolute bottom-2 right-2 p-1.5 transition ${
+                                isFav ? "bg-red-600 text-white" : "bg-black/80 hover:bg-black text-white border border-white/10"
                               }`}
                             >
-                              <Heart className={`w-3.5 h-3.5 ${isFav ? "fill-current animate-pulse" : ""}`} />
+                              <Heart className={`w-3 h-3 ${isFav ? "fill-current animate-pulse" : ""}`} />
                             </button>
                           </div>
 
                           {/* Info and Description */}
-                          <div className="p-3.5 flex-1 flex flex-col justify-between">
+                          <div className="p-3.5 flex-1 flex flex-col justify-between font-mono">
                             <div>
-                              <h4 className="font-extrabold text-xs tracking-wide truncate group-hover:text-cyan-400 transition mb-1 text-white">
+                              <h4 className="font-display font-black text-xs tracking-wider truncate group-hover:text-cyber-accent transition mb-1 text-white uppercase">
                                 {chan.name}
                               </h4>
-                              <p className="text-[10px] opacity-60 text-slate-400 line-clamp-2 h-7 leading-relaxed font-sans">
+                              <p className="text-[10px] text-white/40 line-clamp-2 h-7 leading-relaxed font-sans uppercase">
                                 {chan.description}
                               </p>
                             </div>
 
-                            <div className="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-[9px] font-mono text-cyan-400">
+                            <div className="mt-3 pt-2.5 border-t border-white/5 flex items-center justify-between text-[9px] text-cyber-accent uppercase tracking-widest">
                               <span className="font-bold flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
-                                CANLI:
+                                <span className="w-1.5 h-1.5 rounded-full bg-cyber-accent animate-ping"></span>
+                                LIVE_NODE:
                               </span>
-                              <span className="text-slate-400 font-bold">12:00 - 14:00</span>
+                              <span className="text-white/40 font-bold">12:00 - 14:00</span>
                             </div>
                           </div>
 
@@ -1616,7 +1901,114 @@ export default function App() {
           <RemoteControlHelp lang={lang} onClose={() => setShowRemoteHelp(false)} />
         )}
 
+        {/* ANDROID SMART SETUP & DETAILED INSTALLATION MODAL */}
+        {showAndroidModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-cyber-accent/30 p-6 md:p-8 rounded-none relative shadow-[0_0_50px_rgba(0,255,102,0.15)] font-mono uppercase tracking-wider text-xs">
+              
+              {/* Header */}
+              <div className="flex justify-between items-start border-b border-white/10 pb-4 mb-6">
+                <div>
+                  <h3 className="text-base font-display font-black text-cyber-accent flex items-center gap-2.5">
+                    <Smartphone className="w-5 h-5 animate-bounce-short text-[#3DDC84]" />
+                    <span>ANDROID & ANDROID TV_SETUP_SYSTEM</span>
+                  </h3>
+                  <p className="text-[10px] text-white/40 mt-1">EFES IPTV PRO - MOBİL VE TV KUTUSU AKILLI ENTEGRASYONU</p>
+                </div>
+                <button 
+                  onClick={() => setShowAndroidModal(false)}
+                  className="px-2.5 py-1 text-[10px] bg-white/5 hover:bg-cyber-accent hover:text-black border border-white/10 hover:border-transparent transition cursor-pointer text-white"
+                >
+                  [X]
+                </button>
+              </div>
+
+              {/* Main Content: Two Columns */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* Left Side: Setup Methods */}
+                <div className="flex flex-col gap-4">
+                  <div className="p-4 bg-white/5 border border-white/10">
+                    <h4 className="font-bold text-white flex items-center gap-2 mb-2">
+                      <span className="w-2 h-2 rounded-full bg-[#3DDC84]"></span>
+                      YÖNTEM 1: WEBAPK / PWA KURULUMU
+                    </h4>
+                    <p className="text-[10px] text-white/60 leading-relaxed">
+                      Android akıllı telefonunuzda veya tabletinizde yerel uygulama gibi çalışır.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setShowAndroidModal(false);
+                        handleInstallApp();
+                      }}
+                      className="mt-3 w-full py-2 bg-[#3DDC84] text-black text-[10px] font-bold hover:bg-white hover:text-black transition duration-200 cursor-pointer text-center block animate-pulse"
+                    >
+                      ŞİMDİ ANDROID'E YÜKLE
+                    </button>
+                  </div>
+
+                  <div className="p-4 bg-white/5 border border-white/10">
+                    <h4 className="font-bold text-white flex items-center gap-2 mb-2">
+                      <span className="w-2 h-2 rounded-full bg-cyber-accent"></span>
+                      YÖNTEM 2: ANDROID TV / MI BOX / FIRE STICK
+                    </h4>
+                    <p className="text-[10px] text-white/60 leading-relaxed mb-2">
+                      Televizyon kumandası ile tam uyumlu televizyon modunu etkinleştirin. Tarayıcıda bu adresi açıp sık kullanılanlara ekleyebilirsiniz.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setIsTvMode(true);
+                          setShowAndroidModal(false);
+                          setSecurityToast("Kumanda Uyumlu TV Modu Aktif Edildi!");
+                          setTimeout(() => setSecurityToast(""), 3000);
+                        }}
+                        className="flex-1 py-2 bg-white/5 border border-white/10 hover:border-cyber-accent text-white text-[10px] hover:text-cyber-accent transition duration-200 cursor-pointer text-center"
+                      >
+                        TV MODUNU AÇ
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Side: QR Code scan & URL share */}
+                <div className="flex flex-col items-center justify-center p-4 bg-black/40 border border-white/10 text-center">
+                  <h4 className="font-bold text-white/80 text-[10px] mb-3">TELEFONDAN HEMEN TARATIN</h4>
+                  
+                  {/* Clean high-contrast API generated QR Code */}
+                  <div className="p-2.5 bg-white border border-white/20">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&color=0a0a0a&bgcolor=ffffff&data=${encodeURIComponent(window.location.origin)}`} 
+                      alt="IPTV QR Code"
+                      className="w-36 h-36"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  
+                  <p className="text-[9px] text-white/40 mt-3 leading-relaxed">
+                    Android telefonunuzun veya tabletinizin kamerasını bu QR koda doğrultarak uygulamayı anında mobil cihazınıza taşıyabilirsiniz.
+                  </p>
+                  
+                  <div className="w-full mt-4 p-2 bg-white/5 border border-white/5 text-[9px] text-cyber-accent select-all break-all text-center">
+                    {window.location.origin}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Footer info banner */}
+              <div className="mt-6 pt-4 border-t border-white/10 text-center text-[9px] text-white/30">
+                LİSANS DURUMU: <span className="text-cyber-accent">DOĞRULANDI</span> | KOPYA KORUMA KALKANI ETKİN
+              </div>
+
+            </div>
+          </div>
+        )}
+
       </main>
+
+        </div> {/* Closes Right Side: Main Viewport */}
+      </div> {/* Closes Main Terminal Grid Container */}
 
       {/* ACTIVE MOVIE / TV CHANNELS PLAYER DIALOG */}
       {selectedChannel && (

@@ -75,6 +75,8 @@ export default function VideoPlayer({
   const [speedProgress, setSpeedProgress] = useState(0);
   const hlsRef = useRef<Hls | null>(null);
   const mediaRecoveryAttempts = useRef<number>(0);
+  const networkRecoveryAttempts = useRef<number>(0);
+  const retryCountRef = useRef<number>(0);
 
   const t = TRANSLATIONS[lang];
 
@@ -395,6 +397,45 @@ export default function VideoPlayer({
     }
   };
 
+  // HTML5 Native Video error handler with smart self-healing retries (Item: video ve ses cozme kod sistemi)
+  const handleVideoError = (e: Event) => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    const err = video.error;
+    if (!err) {
+      tryNextBackupUrl();
+      return;
+    }
+
+    console.warn(`Native HTML5 Video Error: code=${err.code}, message=${err.message}`);
+    
+    // err.code values:
+    // 1 = MEDIA_ERR_ABORTED
+    // 2 = MEDIA_ERR_NETWORK (Fatal network error!)
+    // 3 = MEDIA_ERR_DECODE (Fatal decoder/codec error!)
+    // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
+    
+    if (err.code === 2 || err.code === 3) {
+      retryCountRef.current += 1;
+      if (retryCountRef.current <= 3) {
+        setPlaybackError(`Kritik çözücü/bağlantı hatası algılandı. Yeniden tünelleniyor (${retryCountRef.current}/3)...`);
+        const currentSrc = video.src;
+        video.src = ""; // Clear source to reset connection pipeline
+        setTimeout(() => {
+          video.src = currentSrc;
+          video.load();
+          video.play().catch(() => {});
+        }, 2000);
+      } else {
+        retryCountRef.current = 0;
+        tryNextBackupUrl();
+      }
+    } else {
+      tryNextBackupUrl();
+    }
+  };
+
   // Up-to-date and robust HLS decoding with self-healing, retries & auto recovery (Item: video ve ses cozme kod sistemi)
   useEffect(() => {
     if (isYoutube) return;
@@ -482,15 +523,27 @@ export default function VideoPlayer({
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 console.warn("Fatal network error in decoder, recovering...");
-                hls?.startLoad();
+                networkRecoveryAttempts.current += 1;
+                if (networkRecoveryAttempts.current > 3) {
+                  console.warn("Fatal network error persisted. Trying next backup or proxy...");
+                  networkRecoveryAttempts.current = 0;
+                  if (!useProxy) {
+                    setUseProxy(true);
+                  } else {
+                    tryNextBackupUrl();
+                  }
+                } else {
+                  hls?.startLoad();
+                }
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.warn("Fatal media decoding error, trying to recover standard sync...");
                 mediaRecoveryAttempts.current += 1;
-                if (mediaRecoveryAttempts.current > 2) {
+                if (mediaRecoveryAttempts.current > 3) {
                   console.warn("Too many media decoding errors. Falling back to native HTML5 standard codec...");
                   setPlaybackError("Ses veya video çözücü hatası algılandı. Süper Uyumlu yerel HTML5 moduna geçiliyor...");
                   setPlayerEngine("html5");
+                  mediaRecoveryAttempts.current = 0;
                 } else {
                   hls?.recoverMediaError();
                 }
@@ -506,12 +559,12 @@ export default function VideoPlayer({
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         // Native HLS for Safari/iOS
         video.src = sourceUrl;
-        video.addEventListener("error", tryNextBackupUrl);
+        video.addEventListener("error", handleVideoError);
       }
     } else {
       // Standard MP4 or forced Native HTML5
       video.src = sourceUrl;
-      video.addEventListener("error", tryNextBackupUrl);
+      video.addEventListener("error", handleVideoError);
     }
 
     if (savedPosition > 10) {
@@ -523,7 +576,7 @@ export default function VideoPlayer({
         hls.destroy();
         hlsRef.current = null;
       }
-      video.removeEventListener("error", tryNextBackupUrl);
+      video.removeEventListener("error", handleVideoError);
     };
   }, [activeUrl, savedPosition, useProxy, playerEngine]);
 
@@ -736,6 +789,7 @@ export default function VideoPlayer({
           ref={videoRef}
           autoPlay
           playsInline
+          disablePictureInPicture
           className={`${isRadio ? "opacity-0 absolute pointer-events-none w-[1px] h-[1px]" : getAspectRatioClass()} transition-all duration-350 bg-black`}
           onClick={togglePlay}
         />
