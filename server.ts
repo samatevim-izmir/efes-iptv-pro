@@ -886,14 +886,31 @@ function classifyChannel(channel: any): { category: string; type: "live" | "movi
 
 // Full Public M3U/M3U8 Playlists Auto-Scanner and Merger endpoint
 app.post("/api/scan-public-playlists", async (req, res) => {
+  const { customSourceUrl, keywordFilter, selectedPreset } = req.body || {};
   let fetchedChannels: any[] = [];
   
   // Scanned indices using target search engines
-  const sources = [
-    { engine: "www.github.com", query: "turkey iptv live streams m3u", url: "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u" },
-    { engine: "www.google.com", query: "free world tv channels playlist m3u8", url: "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u" },
-    { engine: "www.yandex.com", query: "radyo ve muzik akislari m3u listesi", url: "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u" }
-  ];
+  let sources = [];
+  if (customSourceUrl && customSourceUrl.trim() !== "") {
+    sources.push({
+      engine: "Özel M3U Havuzu",
+      query: "Kullanıcı Özel Bağlantısı",
+      url: customSourceUrl.trim()
+    });
+  } else if (selectedPreset === "tr") {
+    sources.push({ engine: "IPTV-Org TR", query: "Türkiye Kanalları", url: "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u" });
+  } else if (selectedPreset === "world") {
+    sources.push({ engine: "Free-TV World", query: "Global Yayınlar", url: "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u" });
+  } else if (selectedPreset === "radio") {
+    sources.push({ engine: "Müzik & Radyo", query: "TR Müzik/Radyo", url: "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u" });
+  } else {
+    // Default: scan all
+    sources = [
+      { engine: "www.github.com", query: "turkey iptv live streams m3u", url: "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u" },
+      { engine: "www.google.com", query: "free world tv channels playlist m3u8", url: "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u" },
+      { engine: "www.yandex.com", query: "radyo ve muzik akislari m3u listesi", url: "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u" }
+    ];
+  }
 
   let successCount = 0;
   let failCount = 0;
@@ -901,7 +918,7 @@ app.post("/api/scan-public-playlists", async (req, res) => {
   for (const src of sources) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
       
       console.log(`Searching [${src.engine}] with query "${src.query}"...`);
       const response = await fetch(src.url, { signal: controller.signal });
@@ -964,13 +981,6 @@ app.post("/api/scan-public-playlists", async (req, res) => {
       streamUrl: "https://tv-trtbelgesel.medya.trt.com.tr/trt/master.m3u8",
       groupTitle: "Documentary",
       language: "TR"
-    },
-    {
-      name: "TÜRK SİNEMASI (Kemal Sunal Klasikleri)",
-      logo: "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop",
-      streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-      groupTitle: "Movies",
-      language: "TR"
     }
   ];
 
@@ -995,6 +1005,14 @@ app.post("/api/scan-public-playlists", async (req, res) => {
     const norm = normalizeChannelName(chan.name);
     if (!norm) continue;
 
+    // Apply Keyword Filter if specified
+    if (keywordFilter && keywordFilter.trim() !== "") {
+      const q = keywordFilter.toLowerCase();
+      if (!chan.name.toLowerCase().includes(q)) {
+        continue;
+      }
+    }
+
     const classified = classifyChannel(chan);
     
     if (mergedChannelsMap.has(norm)) {
@@ -1018,7 +1036,7 @@ app.post("/api/scan-public-playlists", async (req, res) => {
         logo: chan.logo || "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop",
         streamUrl: chan.streamUrl,
         category: classified.category,
-        description: `${chan.name} yayını, otomatik internet taraması ile GitHub, Google ve Yandex listelerinden başarıyla bulunarak oynatma listenize dahil edildi.`,
+        description: `${chan.name} yayını, otomatik veritabanı araması ile ${customSourceUrl ? "özel listeden" : "kamu listelerinden"} bulunarak oynatma listenize dahil edildi.`,
         language: chan.language || "TR",
         type: classified.type,
         backupUrls: []
@@ -1036,7 +1054,7 @@ app.post("/api/scan-public-playlists", async (req, res) => {
     message: "İnternet taraması tamamlandı! Aynı isimdeki kanallar akıllı algoritmalarla birleştirildi.",
     stats: {
       playlistsScanned: sources.length,
-      scannedEngines: ["www.google.com", "www.yandex.com", "www.github.com"],
+      scannedEngines: customSourceUrl ? ["Kullanıcı Özel Listesi"] : ["www.google.com", "www.yandex.com", "www.github.com"],
       successCount,
       failCount,
       newChannelsAdded: newChannelCount,

@@ -53,6 +53,9 @@ export default function App() {
   const [newPinInput, setNewPinInput] = useState("");
 
   // Scan public playlist states
+  const [scanPreset, setScanPreset] = useState<"all" | "tr" | "world" | "radio">("all");
+  const [scanKeyword, setScanKeyword] = useState("");
+  const [scanCustomUrl, setScanCustomUrl] = useState("");
   const [scanStats, setScanStats] = useState<{
     playlistsScanned: number;
     successCount: number;
@@ -650,18 +653,23 @@ export default function App() {
   // Automatic daily lists scan refresh simulation (Item 8)
   const handleForceAutoTarama = async () => {
     setIsScanningPlaylists(true);
-    setSecurityToast("GitHub, Google ve Yandex IPTV Sunucuları Taranıyor...");
+    setSecurityToast("IPTV Sunucuları ve Veritabanı Taranıyor...");
     setScanStats(null);
     try {
       const res = await fetch("/api/scan-public-playlists", {
         method: "POST",
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customSourceUrl: scanCustomUrl,
+          keywordFilter: scanKeyword,
+          selectedPreset: scanPreset
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setChannels(data.channels);
         setScanStats(data.stats);
-        setSecurityToast("İnternet Taraması Tamamlandı! Aynı İsimdeki Kanallar Birleştirildi.");
+        setSecurityToast("İnternet Taraması Tamamlandı! Kanallar Birleştirildi.");
       } else {
         setSecurityToast("Tarama hatası oluştu, yerel liste yüklendi.");
       }
@@ -881,11 +889,60 @@ export default function App() {
               <div className={`p-5 rounded-2xl border text-xs ${theme === "dark" ? "bg-slate-900/40 border-slate-800 shadow-lg shadow-cyan-500/5" : "bg-white border-slate-200 shadow-sm"}`}>
                 <div className="flex items-center gap-2 font-bold mb-3">
                   <RefreshCw className={`w-4 h-4 text-cyan-400 ${isScanningPlaylists ? "animate-spin" : ""}`} />
-                  <span className="text-white">İnternetten Kanal Ara & Güncelle</span>
+                  <span className="text-white">Otomatik Arama ve IPTV Güncelleme Veritabanı</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed mb-4">
-                  GitHub, Google ve Yandex sunucularındaki ücretsiz m3u/m3u8 listeleri otomatik taranıp, aynı isimdeki kanallar akıllı algoritmalarla birleştirilir.
+                  Küresel kamu sunucularındaki ücretsiz m3u/m3u8 listeleri otomatik aranır, filtrelenir ve aynı isimdeki yayınlar akıllıca birleştirilir.
                 </p>
+
+                {/* Advanced Search Options */}
+                <div className="flex flex-col gap-3 mb-4 bg-slate-950/40 p-3.5 rounded-xl border border-slate-800/40">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Arama Veritabanı Kaynağı</label>
+                    <select
+                      value={scanPreset}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        setScanPreset(val);
+                        if (val !== "custom") {
+                          setScanCustomUrl("");
+                        }
+                      }}
+                      className={`px-3 py-2 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                    >
+                      <option value="all">🌐 Tüm Küresel Sunucular (Google + Yandex + GitHub)</option>
+                      <option value="tr">🇹🇷 IPTV-Org Türkiye TV Paketi</option>
+                      <option value="world">🇺🇸 Free World TV Canlı Yayın Kataloğu</option>
+                      <option value="radio">📻 Türkiye Canlı Radyo & Müzik Listesi</option>
+                      <option value="custom">🔗 Özel M3U Havuzu (.m3u Linki Girin)</option>
+                    </select>
+                  </div>
+
+                  {scanPreset === "custom" && (
+                    <div className="flex flex-col gap-1 animate-fade-in">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Özel M3U Akış Linki</label>
+                      <input
+                        type="text"
+                        placeholder="https://.../playlist.m3u"
+                        value={scanCustomUrl}
+                        onChange={(e) => setScanCustomUrl(e.target.value)}
+                        className={`px-3 py-2 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Kanal İsmi / Kelime Filtresi (İsteğe Bağlı)</label>
+                    <input
+                      type="text"
+                      placeholder="Örn: Spor, Haber, TRT, Music..."
+                      value={scanKeyword}
+                      onChange={(e) => setScanKeyword(e.target.value)}
+                      className={`px-3 py-2 rounded-xl text-xs outline-none transition ${theme === "dark" ? "bg-slate-900 border border-slate-800 text-white focus:border-cyan-400" : "bg-slate-100 border border-slate-200 text-slate-900 focus:border-indigo-500"}`}
+                    />
+                  </div>
+                </div>
+
                 <button
                   onClick={handleForceAutoTarama}
                   disabled={isScanningPlaylists}
@@ -903,7 +960,7 @@ export default function App() {
                   ) : (
                     <>
                       <Sparkles className="w-3.5 h-3.5" />
-                      Sunucuları Tara & Kanalları Birleştir
+                      Veritabanında Ara & Kanalları Güncelle
                     </>
                   )}
                 </button>

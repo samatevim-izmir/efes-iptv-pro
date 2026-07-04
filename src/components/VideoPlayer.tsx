@@ -62,6 +62,7 @@ export default function VideoPlayer({
 
   // Adaptive Bitrate, Internet Speed Auto Quality States
   const [quality, setQuality] = useState<"auto" | "1080p" | "720p" | "480p">("auto");
+  const [playerEngine, setPlayerEngine] = useState<"hls" | "html5" | "stable_codec">("hls");
   const [currentActiveHeight, setCurrentActiveHeight] = useState<number>(1080);
   const [networkSpeed, setNetworkSpeed] = useState<number>(18.5); // Mbps
   const [isMeasuring, setIsMeasuring] = useState(false);
@@ -362,11 +363,27 @@ export default function VideoPlayer({
       ? `/api/proxy?url=${encodeURIComponent(activeUrl)}` 
       : activeUrl;
 
-    const isM3u8 = sourceUrl.endsWith(".m3u8") || sourceUrl.includes("m3u8") || sourceUrl.includes("/api/proxy") || channel.category === "National" || channel.category === "News" || channel.category === "Sports" || channel.category === "Radio";
+    const isM3u8 = activeUrl.endsWith(".m3u8") || activeUrl.includes("m3u8") || channel.category === "National" || channel.category === "News" || channel.category === "Sports" || channel.category === "Radio";
 
-    if (isM3u8) {
+    if (isM3u8 && playerEngine !== "html5") {
       if (Hls.isSupported()) {
-        hls = new Hls({
+        const hlsConfig = playerEngine === "stable_codec" ? {
+          enableWorker: true,
+          lowLatencyMode: false, // Turn off low latency for better buffering
+          backBufferLength: 120,
+          maxBufferLength: 120,
+          maxMaxBufferLength: 240,
+          maxBufferHole: 5, // skip gap holes aggressively
+          highBufferWatchdogPeriod: 5,
+          nudgeMaxRetry: 20, // autostuck recovery
+          appendErrorMaxRetry: 20,
+          manifestLoadingMaxRetry: 15,
+          levelLoadingMaxRetry: 15,
+          fragLoadingMaxRetry: 20,
+          enableSoftwareAES: true, // handles encrypted webstreams
+          liveSyncDurationCount: 6, // larger safety margin
+          liveMaxLatencyDurationCount: 20,
+        } : {
           enableWorker: true,
           lowLatencyMode: true,
           backBufferLength: 90,
@@ -382,7 +399,9 @@ export default function VideoPlayer({
           enableSoftwareAES: true, // handles encrypted webstreams
           liveSyncDurationCount: 3,
           liveMaxLatencyDurationCount: 10,
-        });
+        };
+
+        hls = new Hls(hlsConfig);
 
         hls.loadSource(sourceUrl);
         hls.attachMedia(video);
@@ -422,7 +441,7 @@ export default function VideoPlayer({
         video.addEventListener("error", tryNextBackupUrl);
       }
     } else {
-      // Standard MP4
+      // Standard MP4 or forced Native HTML5
       video.src = sourceUrl;
       video.addEventListener("error", tryNextBackupUrl);
     }
@@ -438,7 +457,7 @@ export default function VideoPlayer({
       }
       video.removeEventListener("error", tryNextBackupUrl);
     };
-  }, [activeUrl, savedPosition, useProxy]);
+  }, [activeUrl, savedPosition, useProxy, playerEngine]);
 
   // Handle Tab Visibility Changes: prevent any background playback completely
   useEffect(() => {
@@ -972,6 +991,27 @@ export default function VideoPlayer({
                 <option value="1080p">1080p FHD</option>
                 <option value="720p">720p HD</option>
                 <option value="480p">480p SD</option>
+              </select>
+            </div>
+
+            {/* Codec / Player Engine selection */}
+            <div className="flex items-center gap-2">
+              <select
+                value={playerEngine}
+                onChange={(e) => {
+                  const val = e.target.value as any;
+                  setPlayerEngine(val);
+                  setPlaybackError(`Çözücü motor değiştiriliyor: ${
+                    val === "hls" ? "Hls.js Pro" : val === "html5" ? "HTML5 Native" : "Süper Kararlı Codec"
+                  }...`);
+                  setTimeout(() => setPlaybackError(null), 2500);
+                }}
+                className="bg-slate-900/90 text-xs text-cyan-400 border border-cyan-500/30 rounded-xl px-3 py-2 font-bold outline-none cursor-pointer hover:border-cyan-400 focus:border-cyan-400 transition shadow-lg shadow-cyan-500/10"
+                title="Yayın Çözücü Codec ve Oynatıcı Motoru"
+              >
+                <option value="hls" className="text-white">🚀 Hls.js Pro (Önerilen)</option>
+                <option value="stable_codec" className="text-white">🛡️ Süper Kararlı Codec</option>
+                <option value="html5" className="text-white">📺 HTML5 Standart Codec</option>
               </select>
             </div>
 
