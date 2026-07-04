@@ -1470,23 +1470,51 @@ app.post("/api/admin/update-turkish-channels", async (req, res) => {
   }
 
   try {
-    const trUrl = "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u";
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-    
-    console.log("Updating Turkish channels from: " + trUrl);
-    const response = await fetch(trUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
+    const urls = [
+      "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u",
+      "https://iptv-org.github.io/iptv/countries/tr.m3u",
+      "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u",
+      "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u",
+      "https://raw.githubusercontent.com/freetv-app/freetv/main/playlists/playlist_turkey.m3u"
+    ];
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch tr.m3u list from GitHub. Status: ${response.status}`);
+    console.log("Beginning dynamic scan of multiple internet IPTV repositories...");
+    let pooledChannels: any[] = [];
+    let successfulSearches = 0;
+
+    // Fetch and parse all 5 major internet sites/repositories concurrently
+    const fetchPromises = urls.map(async (url) => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        
+        console.log(`Searching source: ${url}`);
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const text = await response.text();
+          const parsed = parseM3UContent(text);
+          if (parsed && parsed.length > 0) {
+            pooledChannels = pooledChannels.concat(parsed);
+            successfulSearches++;
+            console.log(`Successfully fetched and parsed ${parsed.length} channels from: ${url}`);
+          }
+        } else {
+          console.warn(`Source responded with non-200 status: ${url} (${response.status})`);
+        }
+      } catch (err: any) {
+        console.error(`Skipping source due to timeout or error (${url}):`, err.message);
+      }
+    });
+
+    await Promise.all(fetchPromises);
+
+    if (pooledChannels.length === 0) {
+      throw new Error("Could not fetch any channels from the searched internet lists.");
     }
 
-    const text = await response.text();
-    const parsed = parseM3UContent(text);
-    if (!parsed || parsed.length === 0) {
-      throw new Error("No channels parsed from the M3U list.");
-    }
+    console.log(`Merged a total of ${pooledChannels.length} streams from all successful internet sources.`);
 
     // Read current channels list
     const currentList = getChannelsList();
@@ -1503,48 +1531,79 @@ app.post("/api/admin/update-turkish-channels", async (req, res) => {
         .replace(/[^a-z0-9]/g, "");
     };
 
-    let updatedCount = 0;
+    let updatedUrlsCount = 0;
+    let updatedCategoriesCount = 0;
     
-    // Update each channel in the current list
+    // Update each channel in our current list
     const updatedList = currentList.map((chan: any) => {
-      // Only process Turkish channels
-      if (chan.language === "TR" || chan.category === "National" || chan.category === "News" || chan.category === "Sports" || chan.category === "Kids") {
+      const isTurkishOrCategoryMatch = 
+        chan.language === "TR" || 
+        ["National", "News", "Sports", "Kids", "Documentary", "Radio", "Movies", "Series", "Premium"].includes(chan.category);
+
+      if (isTurkishOrCategoryMatch) {
         const normChanName = normalize(chan.name);
         
-        // Find match in parsed list
-        const match = parsed.find((p: any) => {
+        // Find best match in the global pooled internet list
+        const match = pooledChannels.find((p: any) => {
           const normPName = normalize(p.name);
           return normPName === normChanName || normPName.includes(normChanName) || normChanName.includes(normPName);
         });
 
-        if (match && match.streamUrl && match.streamUrl !== chan.streamUrl) {
-          chan.backupUrls = chan.backupUrls || [];
-          if (!chan.backupUrls.includes(chan.streamUrl)) {
-            chan.backupUrls.push(chan.streamUrl);
+        // 1. Update streaming address & backup urls if matches found
+        if (match && match.streamUrl) {
+          if (match.streamUrl !== chan.streamUrl) {
+            chan.backupUrls = chan.backupUrls || [];
+            if (!chan.backupUrls.includes(chan.streamUrl)) {
+              chan.backupUrls.push(chan.streamUrl);
+            }
+            chan.streamUrl = match.streamUrl;
+            updatedUrlsCount++;
           }
-          chan.streamUrl = match.streamUrl;
+          
           if (match.logo && (!chan.logo || chan.logo.includes("unsplash"))) {
             chan.logo = match.logo;
           }
-          updatedCount++;
+        }
+
+        // 2. Perform dynamic CATEGORY & TYPE updates as requested by the user
+        const oldCategory = chan.category;
+        const oldType = chan.type;
+        
+        // Run classification over the channel (merged with any match properties)
+        const dummyChannel = {
+          name: chan.name,
+          streamUrl: chan.streamUrl,
+          groupTitle: (match ? match.groupTitle : "") || chan.groupTitle || ""
+        };
+        const { category: newCategory, type: newType } = classifyChannel(dummyChannel);
+
+        // Keep custom designations unless we can make them more accurate
+        if (newCategory && newCategory !== oldCategory) {
+          chan.category = newCategory;
+          updatedCategoriesCount++;
+        }
+        if (newType && newType !== oldType) {
+          chan.type = newType;
         }
       }
       return chan;
     });
 
-    if (updatedCount > 0) {
-      saveChannelsList(updatedList);
-    }
+    // Always persist changes
+    saveChannelsList(updatedList);
 
     res.json({
       success: true,
-      message: `Türksat kanalları başarıyla internetteki en güncel çalışan listeler ile güncellendi!`,
-      updatedCount,
+      message: `Türksat TV yayınları ve kategorileri internetteki 5 farklı kaynak taranarak başarıyla güncellendi!`,
+      searchedSources: urls.length,
+      successfulSources: successfulSearches,
+      updatedUrlsCount,
+      updatedCategoriesCount,
       totalCount: updatedList.length
     });
   } catch (err: any) {
-    console.error("Error updating Turkish channels:", err);
-    res.status(500).json({ error: "Turkish channels update failed", details: err.message });
+    console.error("Error updating Turkish channels and categories:", err);
+    res.status(500).json({ error: "Turkish channels and categories update failed", details: err.message });
   }
 });
 

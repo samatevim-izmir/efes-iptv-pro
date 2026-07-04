@@ -350,8 +350,11 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        setTurkishUpdateResult(`Başarılı! ${data.updatedCount} Türksat kanalı en güncel çalışan adreslerle güncellendi.`);
-        setSecurityToast("Türksat Kanalları Güncellendi!");
+        const statsMsg = `Başarı! ${data.searchedSources} kaynaktan ${data.successfulSources} tanesi başarıyla tarandı. ` +
+          `• Güncellenen Yayın Linki: ${data.updatedUrlsCount} • Güncellenen/Düzeltilen Kategori: ${data.updatedCategoriesCount} ` +
+          `• Toplam Yayın Sayısı: ${data.totalCount}`;
+        setTurkishUpdateResult(statsMsg);
+        setSecurityToast("Yayınlar ve Kategoriler Güncellendi!");
         // Refresh local state list
         const channelsRes = await fetch("/api/auto-channels");
         const channelsData = await channelsRes.json();
