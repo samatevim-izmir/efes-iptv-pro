@@ -8,7 +8,8 @@ import {
   Tv, Film, PlayCircle, Heart, History, PlusCircle, Globe, Radio,
   Moon, Sun, Clock, ShieldCheck, RefreshCw, Upload, Sparkles,
   Tv2, CheckCircle, Search, HelpCircle, Eye, AlertTriangle, FileText,
-  ShieldAlert, Lock, Settings, Trash2, Plus, Edit, ArrowLeft, ChevronLeft
+  ShieldAlert, Lock, Settings, Trash2, Plus, Edit, ArrowLeft, ChevronLeft,
+  Download, Smartphone, Monitor
 } from "lucide-react";
 
 export default function App() {
@@ -75,6 +76,53 @@ export default function App() {
   const [addChannelLanguage, setAddChannelLanguage] = useState("TR");
   const [addChannelType, setAddChannelType] = useState<"live" | "movie" | "series" | "documentary">("live");
   const [addChannelDesc, setAddChannelDesc] = useState("");
+
+  // PWA (Progressive Web App) Install state and handlers
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isAppInstalled, setIsAppInstalled] = useState(false);
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsAppInstalled(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    // Check standalone mode
+    if (window.matchMedia("(display-mode: standalone)").matches || (window.navigator as any).standalone) {
+      setIsAppInstalled(true);
+    }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) {
+      setShowInstallHelp(true);
+      return;
+    }
+    deferredPrompt.prompt();
+    try {
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === "accepted") {
+        setIsAppInstalled(true);
+      }
+    } catch (err) {
+      console.error("Install prompt error:", err);
+    }
+    setDeferredPrompt(null);
+  };
 
   const t = TRANSLATIONS[lang];
 
@@ -1002,6 +1050,92 @@ export default function App() {
                 )}
               </div>
 
+            </div>
+
+            {/* PWA INSTALL & HOME SCREEN SHORTCUT BANNER */}
+            <div className={`p-6 rounded-2xl border ${theme === "dark" ? "bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/20 border-slate-800 shadow-xl" : "bg-gradient-to-r from-white via-slate-50 to-cyan-50 border-slate-200 shadow"}`}>
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                <div className="flex items-start gap-4">
+                  <div className="p-3.5 rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex-shrink-0">
+                    <Monitor className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black tracking-wide text-white flex items-center gap-2">
+                      Ana Ekrana Ekle & Masaüstü Kısayolu Oluştur
+                      <span className="text-[9px] font-bold bg-cyan-400/10 px-2 py-0.5 rounded-full text-cyan-400 border border-cyan-400/20">
+                        PWA Yükleyici
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400 leading-relaxed mt-1.5 max-w-3xl">
+                      EFES IPTV PRO uygulamasını tarayıcınızdan bağımsız, tam ekran ve kesintisiz çalışacak şekilde doğrudan masaüstünüze veya mobil ana ekranınıza bir uygulama kısayolu olarak ekleyebilirsiniz. 
+                      Ayrıca bilgisayarınıza yerel kurulum yaptıysanız, masaüstünüze otomatik kısayol oluşturulmuştur.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-3 flex-shrink-0">
+                  <button
+                    onClick={handleInstallApp}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-extrabold text-xs tracking-wide shadow-lg shadow-cyan-500/20 hover:scale-102 transition duration-300 flex items-center gap-2 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{deferredPrompt ? "Kısayolu Ana Ekrana Ekle" : "Uygulamayı Cihaza Yükle"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowInstallHelp(!showInstallHelp)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/50 font-bold text-xs transition duration-300 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <HelpCircle className="w-4 h-4 text-cyan-400" />
+                    <span>Nasıl Yapılır?</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Install guide inline expansion */}
+              {showInstallHelp && (
+                <div className="mt-5 pt-5 border-t border-slate-800/60 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs animate-fade-in">
+                  <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5">
+                    <h4 className="font-extrabold text-cyan-400 flex items-center gap-1.5 mb-2">
+                      <Monitor className="w-4 h-4" />
+                      1. Bilgisayar (Chrome/Edge/Opera)
+                    </h4>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Adres çubuğunun sağ tarafındaki <strong className="text-white">"Yükle" (ikonu aşağı ok olan monitör)</strong> düğmesine tıklayın ya da tarayıcı menüsünden <strong className="text-white">"Efes IPTV Pro Uygulamasını Yükle"</strong> seçeneğini seçin. Kısayol masaüstünüze eklenecektir.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5">
+                    <h4 className="font-extrabold text-indigo-400 flex items-center gap-1.5 mb-2">
+                      <Smartphone className="w-4 h-4" />
+                      2. Mobil Cihazlar (iOS / Android)
+                    </h4>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      <strong className="text-white">Safari (iOS):</strong> Paylaş butonuna basıp <strong className="text-white">"Ana Ekrana Ekle"</strong> seçeneğini seçin. <br />
+                      <strong className="text-white">Chrome (Android):</strong> Sağ üstteki üç noktaya tıklayıp <strong className="text-white">"Uygulamayı Yükle"</strong> veya <strong className="text-white">"Ana Ekrana Ekle"</strong> seçeneğine tıklayın.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-950/40 border border-white/5">
+                    <h4 className="font-extrabold text-amber-400 flex items-center gap-1.5 mb-2">
+                      <CheckCircle className="w-4 h-4" />
+                      3. Yerel Çevrimdışı Kurulum
+                    </h4>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Yerel sunucu kurulum betiğini (<code className="text-white bg-slate-900 px-1 py-0.5 rounded">kurulum_windows.bat</code> veya <code className="text-white bg-slate-900 px-1 py-0.5 rounded">kurulum_linux_macos.sh</code>) çalıştırdıktan sonra, masaüstünüze otomatik olarak <strong className="text-white">EFES IPTV PRO</strong> kısayolu oluşturulur.
+                    </p>
+                  </div>
+
+                  <div className="col-span-1 md:col-span-3 flex justify-end">
+                    <button
+                      onClick={() => setShowInstallHelp(false)}
+                      className="text-[10px] text-slate-400 hover:text-white underline font-bold mt-2 cursor-pointer"
+                    >
+                      Kılavuzu Kapat
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
           </div>
