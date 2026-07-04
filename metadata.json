@@ -1,0 +1,6 @@
+{
+  "name": "EFES İPTV PRO",
+  "description": "Android TV ve Mobil uyumlu, 24 saatlik otomatik güncelleme ve EPG desteği olan güvenli IPTV oynatıcı.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

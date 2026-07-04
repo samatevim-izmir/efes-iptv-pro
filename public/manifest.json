@@ -1,0 +1,22 @@
+{
+  "short_name": "EFES IPTV",
+  "name": "EFES IPTV PRO - Canlı Yayın & Sinema",
+  "description": "Profesyonel IPTV ve Canlı Radyo Oynatıcısı",
+  "icons": [
+    {
+      "src": "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=192&auto=format&fit=crop",
+      "type": "image/jpeg",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=512&auto=format&fit=crop",
+      "type": "image/jpeg",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#020617",
+  "theme_color": "#06b6d4",
+  "display": "standalone",
+  "orientation": "portrait"
+}
