@@ -1830,6 +1830,106 @@ app.post("/api/admin/upgrade-zip", (req, res) => {
   }
 });
 
+// Admin - Download full update zip (on-the-fly packaging)
+app.get("/api/admin/download-update-zip", (req, res) => {
+  const token = req.query.token;
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).send("Unauthorized");
+  }
+
+  try {
+    const zip = new AdmZip();
+    
+    // Add individual files
+    const rootFiles = [
+      "package.json",
+      "index.html",
+      "server.ts",
+      "vite.config.ts",
+      "tsconfig.json",
+      "Setup.bat",
+      "Setup.sh",
+      "kurulum_windows.bat",
+      "kurulum_linux_macos.sh",
+      "admin_config.json",
+      "channels_db.json"
+    ];
+
+    rootFiles.forEach(file => {
+      const fullPath = path.join(process.cwd(), file);
+      if (fs.existsSync(fullPath)) {
+        zip.addLocalFile(fullPath);
+      }
+    });
+
+    // Add directories
+    const dirs = ["src", "public"];
+    dirs.forEach(dir => {
+      const fullPath = path.join(process.cwd(), dir);
+      if (fs.existsSync(fullPath)) {
+        zip.addLocalFolder(fullPath, dir);
+      }
+    });
+
+    const buffer = zip.toBuffer();
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", "attachment; filename=EFES_IPTV_PRO_Guncelleme.zip");
+    res.send(buffer);
+  } catch (err: any) {
+    console.error("Failed to generate update zip:", err);
+    res.status(500).send("Update zip packaging failed: " + err.message);
+  }
+});
+
+// Admin - Export and download channels as M3U file
+app.get("/api/admin/download-channels-m3u", (req, res) => {
+  const token = req.query.token;
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).send("Unauthorized");
+  }
+
+  try {
+    const channels = getChannelsList();
+    let m3uText = "#EXTM3U\n";
+    channels.forEach(channel => {
+      m3uText += `#EXTINF:-1 tvg-logo="${channel.logo}" group-title="${channel.category}",${channel.name}\n`;
+      m3uText += `${channel.streamUrl}\n`;
+    });
+
+    res.setHeader("Content-Type", "application/x-mpegurl");
+    res.setHeader("Content-Disposition", "attachment; filename=efes_iptv_pro_playlist.m3u");
+    res.send(m3uText);
+  } catch (err: any) {
+    console.error("Failed to generate M3U export:", err);
+    res.status(500).send("Export failed: " + err.message);
+  }
+});
+
+// Admin - Download any root setup/cleaner file safely
+app.get("/api/admin/download-file", (req, res) => {
+  const token = req.query.token;
+  const filename = req.query.filename;
+  
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).send("Unauthorized");
+  }
+
+  if (typeof filename !== "string") {
+    return res.status(400).send("filename is required");
+  }
+
+  // Sanitize filename to prevent directory traversal
+  const sanitized = path.basename(filename);
+  const targetPath = path.join(process.cwd(), sanitized);
+
+  if (fs.existsSync(targetPath)) {
+    res.setHeader("Content-Disposition", `attachment; filename=${sanitized}`);
+    res.sendFile(targetPath);
+  } else {
+    res.status(404).send("File not found");
+  }
+});
+
 // Serve static build or mount Vite dev server
 const startServer = async () => {
   if (process.env.NODE_ENV !== "production") {

@@ -2106,6 +2106,80 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Panel 5: İndirme ve Güncelleme Dosyaları Merkezi */}
+                    <div className="p-4 rounded-none border border-white/10 bg-black/60 col-span-1 md:col-span-2">
+                      <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 mb-2 font-display">
+                        <Download className="w-4 h-4" />
+                        GÜNCELLEME VE İNDİRME MERKEZİ (DOWNLOAD CENTER)
+                        <span className="bg-cyber-accent/20 text-cyber-accent border border-cyber-accent/20 px-1 py-0.2 text-[8px] font-bold uppercase tracking-wider font-mono">SYSTEM_PACKAGE</span>
+                      </h4>
+                      <p className="text-[10px] text-white/40 mb-4 leading-relaxed uppercase tracking-wider font-mono">
+                        Yerel istemciler veya yedekleme için güncelleme paketlerini, hazır kurulum dosyalarını ve M3U oynatma listelerini indirin.
+                      </p>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
+                        {/* Download Complete Update ZIP */}
+                        <div className="p-3 bg-black/40 border border-white/10 flex flex-col justify-between">
+                          <div>
+                            <h5 className="text-[9px] font-bold text-white mb-1 uppercase tracking-widest text-cyber-accent">GÜNCELLEME PAKETİ (ZIP)</h5>
+                            <p className="text-[8px] text-white/50 mb-3 uppercase leading-relaxed">Tüm kaynak kodları, kurulum dosyalarını ve güncel veritabanını içeren tam paket.</p>
+                          </div>
+                          <a
+                            href={`/api/admin/download-update-zip?token=${adminToken}`}
+                            download="EFES_IPTV_PRO_Guncelleme.zip"
+                            className="block w-full text-center py-2 bg-cyber-accent text-black text-[9px] font-bold tracking-widest hover:bg-white transition cursor-pointer"
+                          >
+                            ZIP İNDİR
+                          </a>
+                        </div>
+
+                        {/* Download Channels M3U Playlist */}
+                        <div className="p-3 bg-black/40 border border-white/10 flex flex-col justify-between">
+                          <div>
+                            <h5 className="text-[9px] font-bold text-white mb-1 uppercase tracking-widest text-blue-400">M3U KANAL PLAYLISTI</h5>
+                            <p className="text-[8px] text-white/50 mb-3 uppercase leading-relaxed">Mevcut aktif kanalları içeren standart IPTV .m3u formatındaki oynatma listesi.</p>
+                          </div>
+                          <a
+                            href={`/api/admin/download-channels-m3u?token=${adminToken}`}
+                            download="efes_iptv_pro_playlist.m3u"
+                            className="block w-full text-center py-2 bg-indigo-600 text-white text-[9px] font-bold tracking-widest hover:bg-indigo-500 transition cursor-pointer"
+                          >
+                            M3U İNDİR
+                          </a>
+                        </div>
+
+                        {/* Download Windows Launcher */}
+                        <div className="p-3 bg-black/40 border border-white/10 flex flex-col justify-between">
+                          <div>
+                            <h5 className="text-[9px] font-bold text-white mb-1 uppercase tracking-widest text-emerald-400">WINDOWS SETUP (.BAT)</h5>
+                            <p className="text-[8px] text-white/50 mb-3 uppercase leading-relaxed">Windows işletim sistemlerinde tek tıkla otomatik kurulum ve başlatma betiği.</p>
+                          </div>
+                          <a
+                            href={`/api/admin/download-file?filename=kurulum_windows.bat&token=${adminToken}`}
+                            download="kurulum_windows.bat"
+                            className="block w-full text-center py-2 bg-white/10 text-white text-[9px] font-bold tracking-widest border border-white/20 hover:bg-white/20 transition cursor-pointer"
+                          >
+                            BAT İNDİR
+                          </a>
+                        </div>
+
+                        {/* Download Linux/macOS Launcher */}
+                        <div className="p-3 bg-black/40 border border-white/10 flex flex-col justify-between">
+                          <div>
+                            <h5 className="text-[9px] font-bold text-white mb-1 uppercase tracking-widest text-orange-400">MACOS / LINUX (.SH)</h5>
+                            <p className="text-[8px] text-white/50 mb-3 uppercase leading-relaxed">macOS ve Linux terminal tabanlı otomatik kurulum ve başlatıcı betiği.</p>
+                          </div>
+                          <a
+                            href={`/api/admin/download-file?filename=kurulum_linux_macos.sh&token=${adminToken}`}
+                            download="kurulum_linux_macos.sh"
+                            className="block w-full text-center py-2 bg-white/10 text-white text-[9px] font-bold tracking-widest border border-white/20 hover:bg-white/20 transition cursor-pointer"
+                          >
+                            SH İNDİR
+                          </a>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </>
               )}
