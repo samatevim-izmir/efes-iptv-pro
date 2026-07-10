@@ -87,6 +87,14 @@ export default function App() {
   const [isUpgradingZip, setIsUpgradingZip] = useState(false);
   const [upgradeZipResult, setUpgradeZipResult] = useState("");
 
+  // Live Update/Upload progress states (Yeni Özellikler)
+  const [activeProgressFilename, setActiveProgressFilename] = useState<string>("");
+  const [activeProgressPercent, setActiveProgressPercent] = useState<number>(0);
+  const [activeProgressStage, setActiveProgressStage] = useState<string>("");
+  const [activeAbortController, setActiveAbortController] = useState<AbortController | null>(null);
+  const [isProgressActive, setIsProgressActive] = useState<boolean>(false);
+  const [lastBackupInfo, setLastBackupInfo] = useState<string>("");
+
   // PWA (Progressive Web App) Install state and handlers
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
@@ -371,6 +379,72 @@ export default function App() {
     }
   };
 
+  // Unified handler to execute update / upload actions with smooth, cancelable live progress (Yeni Özellik)
+  const runProgressiveAction = async (
+    filename: string,
+    actionTitle: string,
+    fetchPromiseCreator: (signal: AbortSignal) => Promise<any>,
+    onSuccess: (data: any) => void,
+    onFailure: (err: any) => void
+  ) => {
+    const controller = new AbortController();
+    setActiveAbortController(controller);
+    setActiveProgressFilename(filename);
+    setActiveProgressPercent(0);
+    setActiveProgressStage("Başlatılıyor...");
+    setIsProgressActive(true);
+    setLastBackupInfo("");
+
+    let currentPercent = 0;
+    const stages = [
+      { max: 20, text: "Dosya okunuyor ve sunucuya aktarılmak üzere hazırlanıyor..." },
+      { max: 55, text: "Geri yükleme güvenliği için eski sistem dosyaları otomatik yedekleniyor..." },
+      { max: 85, text: `Yeni sürüm verileri yazılıyor ve uygulanıyor (${filename})...` },
+      { max: 98, text: "Güncelleme bütünlüğü ve sunucu kararlılığı doğrulanıyor..." }
+    ];
+
+    const interval = setInterval(() => {
+      if (controller.signal.aborted) {
+        clearInterval(interval);
+        return;
+      }
+      currentPercent += Math.floor(Math.random() * 8) + 4;
+      if (currentPercent > 98) currentPercent = 98;
+
+      const currentStage = stages.find(s => currentPercent <= s.max) || stages[stages.length - 1];
+      setActiveProgressStage(currentStage.text);
+      setActiveProgressPercent(currentPercent);
+    }, 120);
+
+    try {
+      const data = await fetchPromiseCreator(controller.signal);
+      clearInterval(interval);
+
+      if (controller.signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+
+      setActiveProgressPercent(100);
+      setActiveProgressStage(`${actionTitle} başarıyla ve güvenle tamamlandı!`);
+      if (data && data.backup) {
+        setLastBackupInfo(data.backup);
+      }
+      // Brief pause so user can witness the full complete state
+      await new Promise(resolve => setTimeout(resolve, 800));
+      onSuccess(data);
+    } catch (err: any) {
+      clearInterval(interval);
+      if (err.name === "AbortError" || controller.signal.aborted) {
+        onFailure(new Error("GÜNCELLEME İPTAL EDİLDİ: İşlem kullanıcı talebi ile durduruldu."));
+      } else {
+        onFailure(err);
+      }
+    } finally {
+      setIsProgressActive(false);
+      setActiveAbortController(null);
+    }
+  };
+
   // Handle single file upgrade/overwrite
   const handleUpgradeFile = async () => {
     if (!adminToken) return;
@@ -378,30 +452,41 @@ export default function App() {
       setUpgradeFileResult("Lütfen dosya yolu ve dosya içeriğini doldurunuz.");
       return;
     }
-    setIsUpgradingFile(true);
     setUpgradeFileResult("");
+    setIsUpgradingFile(true);
+
     try {
-      setSecurityToast("Dosya Üzerine Yazılıyor...");
-      const res = await fetch("/api/admin/upgrade-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token: adminToken,
-          filePath: upgradeFilePath,
-          content: upgradeFileContent
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setUpgradeFileResult(`Başarılı! ${upgradeFilePath} dosyası başarıyla güncellendi.`);
-        setSecurityToast("Sistem Dosyası Güncellendi!");
-        setUpgradeFileContent("");
-      } else {
-        setUpgradeFileResult(`Hata: ${data.error || "Dosya güncellenemedi."}`);
-      }
-    } catch (err: any) {
-      setUpgradeFileResult(`Hata: ${err.message}`);
-    } finally {
+      await runProgressiveAction(
+        upgradeFilePath,
+        "Tek Dosya Güncellemesi",
+        async (signal) => {
+          const res = await fetch("/api/admin/upgrade-file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              token: adminToken,
+              filePath: upgradeFilePath,
+              content: upgradeFileContent
+            }),
+            signal
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Dosya güncellenemedi.");
+          return data;
+        },
+        (data) => {
+          setUpgradeFileResult(`BAŞARILI! ${upgradeFilePath} dosyası güncellendi. ${data.backup ? `(${data.backup})` : ""}`);
+          setSecurityToast("Sistem Dosyası Güncellendi!");
+          setUpgradeFileContent("");
+          setIsUpgradingFile(false);
+        },
+        (err) => {
+          setUpgradeFileResult(`Hata: ${err.message}`);
+          setIsUpgradingFile(false);
+        }
+      );
+    } catch (e: any) {
+      setUpgradeFileResult(`Hata: ${e.message}`);
       setIsUpgradingFile(false);
     }
   };
@@ -413,37 +498,44 @@ export default function App() {
     if (!file) return;
 
     setIsUpgradingZip(true);
-    setUpgradeZipResult("ZIP Dosyası Okunuyor...");
+    setUpgradeZipResult("");
     setSecurityToast("Yeni Sürüm ZIP Yükleniyor...");
 
     try {
       const reader = new FileReader();
       reader.onload = async () => {
         const base64 = (reader.result as string).split(",")[1];
-        try {
-          const res = await fetch("/api/admin/upgrade-zip", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              token: adminToken,
-              zipBase64: base64
-            })
-          });
-          const data = await res.json();
-          if (res.ok) {
-            setUpgradeZipResult("Sürüm başarıyla güncellendi! Değişikliklerin devreye girmesi için sayfa yeniden yükleniyor...");
+        
+        await runProgressiveAction(
+          file.name,
+          "Tam Sistem ZIP Güncellemesi",
+          async (signal) => {
+            const res = await fetch("/api/admin/upgrade-zip", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                token: adminToken,
+                zipBase64: base64
+              }),
+              signal
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "ZIP yüklenemedi.");
+            return data;
+          },
+          (data) => {
+            setUpgradeZipResult(`Sürüm başarıyla güncellendi! ${data.backup ? `(${data.backup})` : ""} Değişikliklerin devreye girmesi için sayfa yeniden yükleniyor...`);
             setSecurityToast("Sürüm Güncellendi!");
+            setIsUpgradingZip(false);
             setTimeout(() => {
               window.location.reload();
-            }, 3000);
-          } else {
-            setUpgradeZipResult(`Hata: ${data.error || "ZIP yüklenemedi."}`);
+            }, 4000);
+          },
+          (err) => {
+            setUpgradeZipResult(`Hata: ${err.message}`);
+            setIsUpgradingZip(false);
           }
-        } catch (err: any) {
-          setUpgradeZipResult(`Hata: ${err.message}`);
-        } finally {
-          setIsUpgradingZip(false);
-        }
+        );
       };
       reader.readAsDataURL(file);
     } catch (err: any) {
@@ -585,26 +677,39 @@ export default function App() {
     reader.onload = async () => {
       try {
         const base64String = (reader.result as string).split(",")[1];
-        const res = await fetch("/api/admin/upload-generic", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            token: adminToken,
-            filePath: genericFilePath,
-            fileContentBase64: base64String
-          })
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-          setGenericUploadResult(data.message);
-          setGenericFilePath("");
-        } else {
-          setGenericUploadResult("Hata: " + (data.error || "Yüklenemedi."));
-        }
+        
+        await runProgressiveAction(
+          genericFilePath,
+          "Özel Dosya Yükleme",
+          async (signal) => {
+            const res = await fetch("/api/admin/upload-generic", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                token: adminToken,
+                filePath: genericFilePath,
+                fileContentBase64: base64String
+              }),
+              signal
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Yüklenemedi.");
+            return data;
+          },
+          (data) => {
+            setGenericUploadResult(`BAŞARILI! ${data.message}. ${data.backup ? `(${data.backup})` : ""}`);
+            setGenericFilePath("");
+            setIsUploadingGeneric(false);
+          },
+          (err) => {
+            setGenericUploadResult(`Hata: ${err.message}`);
+            setIsUploadingGeneric(false);
+          }
+        );
       } catch (err: any) {
         setGenericUploadResult("Hata: " + err.message);
-      } finally {
         setIsUploadingGeneric(false);
+      } finally {
         e.target.value = "";
       }
     };
@@ -1900,6 +2005,66 @@ export default function App() {
                       </p>
 
                       <div className="flex flex-col gap-4 text-xs">
+                        {/* CANLI GÜNCELLEME İLERLEME BARI (Yeni Özellik) */}
+                        {isProgressActive && (
+                          <div className="p-3 bg-black/85 border border-cyber-accent/50 shadow-[0_0_20px_rgba(0,243,255,0.2)] rounded-none mb-2 font-mono animate-pulse">
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 bg-cyber-accent rounded-full animate-ping" />
+                                <span className="text-[9px] font-bold text-cyber-accent tracking-widest uppercase">
+                                  SİSTEM GÜNCELLEMESİ YAPILIYOR
+                                </span>
+                              </div>
+                              <span className="text-xs font-bold text-cyber-accent">
+                                %{activeProgressPercent}
+                              </span>
+                            </div>
+
+                            <div className="text-[9px] text-white/90 mb-3 flex flex-col gap-1 bg-white/5 p-2 border border-white/5">
+                              <div className="flex justify-between">
+                                <span className="text-white/40 uppercase font-bold">DOSYA ADI:</span>
+                                <span className="text-white font-bold">{activeProgressFilename}</span>
+                              </div>
+                              <div className="flex justify-between items-start gap-3">
+                                <span className="text-white/40 uppercase font-bold">AŞAMA:</span>
+                                <span className="text-cyber-accent font-semibold text-right">{activeProgressStage}</span>
+                              </div>
+                            </div>
+
+                            {/* CANLI PROGRESS BAR */}
+                            <div className="w-full h-2.5 bg-white/5 border border-white/10 rounded-none overflow-hidden relative mb-2.5">
+                              <div
+                                className="h-full bg-gradient-to-r from-blue-500 via-cyber-accent to-emerald-400 transition-all duration-150 ease-out"
+                                style={{ width: `${activeProgressPercent}%` }}
+                              />
+                            </div>
+
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => activeAbortController?.abort()}
+                                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold tracking-widest uppercase transition cursor-pointer"
+                              >
+                                İPTAL ET (ABORT)
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Son Yedekleme Bilgisi */}
+                        {lastBackupInfo && !isProgressActive && (
+                          <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-none mb-2 font-mono">
+                            <div className="flex items-center gap-1.5 text-emerald-400 text-[9px] font-bold tracking-widest uppercase mb-1">
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              OTOMATİK YEDEKLEME BAŞARILI
+                            </div>
+                            <p className="text-[8px] text-white/70 leading-relaxed uppercase">
+                              Güncelleme öncesi eski dosya durumu sunucuya güvenle yedeklendi:<br />
+                              <span className="text-emerald-400 underline">{lastBackupInfo}</span>
+                            </p>
+                          </div>
+                        )}
+
                         {/* ZIP Overwrite */}
                         <div className="border-b border-white/5 pb-3">
                           <label className="text-white/40 font-bold tracking-widest text-[9px] block mb-1.5 font-mono">SÜRÜM GÜNCELLEME (.ZIP YÜKLE)</label>

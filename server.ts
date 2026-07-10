@@ -1661,6 +1661,89 @@ app.post("/api/admin/update-links", (req, res) => {
   res.json({ success: true, links: config.update_links });
 });
 
+// Helper to automatically backup a specific file before upgrade/overwriting
+function backupFileBeforeOverwrite(filePath: string) {
+  try {
+    const targetPath = path.resolve(process.cwd(), filePath);
+    // Ensure it resides within current working directory for security
+    if (!targetPath.startsWith(process.cwd())) {
+      console.warn("Security: Attempted backup path out of bounds:", filePath);
+      return null;
+    }
+    if (fs.existsSync(targetPath)) {
+      const stats = fs.statSync(targetPath);
+      if (stats.isFile()) {
+        const backupsDir = path.join(process.cwd(), "backups");
+        if (!fs.existsSync(backupsDir)) {
+          fs.mkdirSync(backupsDir, { recursive: true });
+        }
+        const fileBase = path.basename(filePath);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const backupName = `${fileBase}_backup_${timestamp}`;
+        const backupPath = path.join(backupsDir, backupName);
+        fs.copyFileSync(targetPath, backupPath);
+        console.log(`Automatic backup created for ${filePath} at: ${backupPath}`);
+        return backupName;
+      }
+    }
+  } catch (err: any) {
+    console.error("Backup file failed:", filePath, err.message);
+  }
+  return null;
+}
+
+// Helper to automatically backup the entire project before a major ZIP upgrade
+function backupProjectBeforeZipUpgrade() {
+  try {
+    const backupsDir = path.join(process.cwd(), "backups");
+    if (!fs.existsSync(backupsDir)) {
+      fs.mkdirSync(backupsDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupName = `project_state_backup_${timestamp}.zip`;
+    const backupZipPath = path.join(backupsDir, backupName);
+    const zip = new AdmZip();
+    
+    // Core files to pack
+    const rootFiles = [
+      "package.json",
+      "index.html",
+      "server.ts",
+      "vite.config.ts",
+      "tsconfig.json",
+      "Setup.bat",
+      "Setup.sh",
+      "kurulum_windows.bat",
+      "kurulum_linux_macos.sh",
+      "admin_config.json",
+      "channels_db.json"
+    ];
+
+    rootFiles.forEach(file => {
+      const fullPath = path.join(process.cwd(), file);
+      if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+        zip.addLocalFile(fullPath);
+      }
+    });
+
+    // Subfolders to pack, skipping node_modules and backups directory to prevent infinite loops
+    const dirs = ["src", "public"];
+    dirs.forEach(dir => {
+      const fullPath = path.join(process.cwd(), dir);
+      if (fs.existsSync(fullPath)) {
+        zip.addLocalFolder(fullPath, dir);
+      }
+    });
+
+    zip.writeZip(backupZipPath);
+    console.log(`Automatic full project backup created at: ${backupZipPath}`);
+    return backupName;
+  } catch (err: any) {
+    console.error("Automatic project state backup failed:", err.message);
+  }
+  return null;
+}
+
 // Admin - Upload Custom File (Dosya Ekleme)
 app.post("/api/admin/upload-generic", (req, res) => {
   const { token, filePath, fileContentBase64 } = req.body || {};
@@ -1675,11 +1758,16 @@ app.post("/api/admin/upload-generic", (req, res) => {
   const sanitizedPath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
   const targetPath = path.join(process.cwd(), sanitizedPath);
 
+  let backupCreated: string | null = null;
+
   try {
     const dir = path.dirname(targetPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+
+    // Auto backup old file if it exists
+    backupCreated = backupFileBeforeOverwrite(sanitizedPath);
 
     const buffer = Buffer.from(fileContentBase64, "base64");
     fs.writeFileSync(targetPath, buffer);
@@ -1687,7 +1775,8 @@ app.post("/api/admin/upload-generic", (req, res) => {
 
     res.json({
       success: true,
-      message: `Dosya başarıyla yüklendi: ${sanitizedPath}`
+      message: `Dosya başarıyla yüklendi: ${sanitizedPath}`,
+      backup: backupCreated ? `Yedek alındı: backups/${backupCreated}` : "Eski dosya mevcut olmadığı için yedekleme gerekmedi."
     });
   } catch (err: any) {
     console.error(`Error uploading file ${sanitizedPath}:`, err);
@@ -1781,6 +1870,8 @@ app.post("/api/admin/upgrade-file", (req, res) => {
   const sanitizedPath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
   const targetPath = path.join(process.cwd(), sanitizedPath);
 
+  let backupCreated: string | null = null;
+
   try {
     // Create parent directory if not exists
     const dir = path.dirname(targetPath);
@@ -1788,12 +1879,16 @@ app.post("/api/admin/upgrade-file", (req, res) => {
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    // Auto backup old file if it exists
+    backupCreated = backupFileBeforeOverwrite(sanitizedPath);
+
     fs.writeFileSync(targetPath, content, "utf-8");
     console.log(`System upgrade file overwritten successfully: ${sanitizedPath}`);
 
     res.json({
       success: true,
-      message: `Dosya başarıyla üzerine yazıldı: ${sanitizedPath}`
+      message: `Dosya başarıyla üzerine yazıldı: ${sanitizedPath}`,
+      backup: backupCreated ? `Yedek alındı: backups/${backupCreated}` : "Eski dosya mevcut olmadığı için yedekleme gerekmedi."
     });
   } catch (err: any) {
     console.error(`Error overwriting file ${sanitizedPath}:`, err);
@@ -1812,7 +1907,12 @@ app.post("/api/admin/upgrade-zip", (req, res) => {
     return res.status(400).json({ error: "zipBase64 is required" });
   }
 
+  let backupCreated: string | null = null;
+
   try {
+    // Auto backup full project state before zip overwrite
+    backupCreated = backupProjectBeforeZipUpgrade();
+
     const zipBuffer = Buffer.from(zipBase64, "base64");
     const zip = new AdmZip(zipBuffer);
     
@@ -1822,7 +1922,8 @@ app.post("/api/admin/upgrade-zip", (req, res) => {
 
     res.json({
       success: true,
-      message: "Yeni sürüm dosyaları başarıyla mevcut sürümün üzerine yazıldı! Uygulama güncellendi."
+      message: "Yeni sürüm dosyaları başarıyla mevcut sürümün üzerine yazıldı! Uygulama güncellendi.",
+      backup: backupCreated ? `Tam sistem yedeği alındı: backups/${backupCreated}` : "Sistem yedeklemesi yapılamadı."
     });
   } catch (err: any) {
     console.error("Error upgrading system via zip:", err);
