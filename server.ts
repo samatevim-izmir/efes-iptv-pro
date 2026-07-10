@@ -18,29 +18,59 @@ app.use(express.json());
 const CONFIG_FILE = path.join(process.cwd(), "admin_config.json");
 const CHANNELS_FILE = path.join(process.cwd(), "channels_db.json");
 
-// Helper: Get admin PIN (default: "evim1234")
-function getAdminPin(): string {
+// Helper: Get full admin config
+function getAdminConfig(): { pin: string; update_links?: string[] } {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = fs.readFileSync(CONFIG_FILE, "utf-8");
-      const config = JSON.parse(data);
-      if (config && config.pin) {
-        return config.pin;
+      const parsed = JSON.parse(data);
+      if (parsed) {
+        return {
+          pin: parsed.pin || "evim1234",
+          update_links: Array.isArray(parsed.update_links) ? parsed.update_links : undefined
+        };
       }
     }
   } catch (err) {
-    console.error("Error reading admin PIN, using default evim1234:", err);
+    console.error("Error reading admin config:", err);
   }
-  return "evim1234";
+  return { pin: "evim1234" };
+}
+
+// Helper: Get admin PIN (default: "evim1234")
+function getAdminPin(): string {
+  return getAdminConfig().pin || "evim1234";
+}
+
+// Helper: Save full admin config
+function saveAdminConfig(config: { pin: string; update_links?: string[] }) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving admin config:", err);
+  }
 }
 
 // Helper: Save admin PIN
 function saveAdminPin(newPin: string) {
-  try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ pin: newPin }, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving admin PIN:", err);
+  const config = getAdminConfig();
+  config.pin = newPin;
+  saveAdminConfig(config);
+}
+
+// Helper: Get auto-update M3U links
+function getUpdateLinks(): string[] {
+  const config = getAdminConfig();
+  if (config.update_links && Array.isArray(config.update_links) && config.update_links.length > 0) {
+    return config.update_links;
   }
+  return [
+    "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u",
+    "https://iptv-org.github.io/iptv/countries/tr.m3u",
+    "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u",
+    "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u",
+    "https://raw.githubusercontent.com/freetv-app/freetv/main/playlists/playlist_turkey.m3u"
+  ];
 }
 
 // Initialize Gemini SDK with telemetry header
@@ -867,9 +897,15 @@ app.get("/api/proxy", async (req, res) => {
       return res.send(Buffer.from(rewrittenText, "utf-8"));
     } else {
       // Stream segments or raw media chunks
-      const arrayBuffer = await fetchResponse.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      return res.send(buffer);
+      if (fetchResponse.body) {
+        const { Readable } = await import("stream");
+        const nodeStream = Readable.fromWeb(fetchResponse.body as any);
+        nodeStream.pipe(res);
+      } else {
+        const arrayBuffer = await fetchResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        return res.send(buffer);
+      }
     }
   } catch (error: any) {
     console.error("Secure Proxy error for target URL:", targetUrl, error.message);
@@ -1470,13 +1506,7 @@ app.post("/api/admin/update-turkish-channels", async (req, res) => {
   }
 
   try {
-    const urls = [
-      "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u",
-      "https://iptv-org.github.io/iptv/countries/tr.m3u",
-      "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u",
-      "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u",
-      "https://raw.githubusercontent.com/freetv-app/freetv/main/playlists/playlist_turkey.m3u"
-    ];
+    const urls = getUpdateLinks();
 
     console.log("Beginning dynamic scan of multiple internet IPTV repositories...");
     let pooledChannels: any[] = [];
@@ -1604,6 +1634,135 @@ app.post("/api/admin/update-turkish-channels", async (req, res) => {
   } catch (err: any) {
     console.error("Error updating Turkish channels and categories:", err);
     res.status(500).json({ error: "Turkish channels and categories update failed", details: err.message });
+  }
+});
+
+// Admin - Get Automatic Update Links
+app.get("/api/admin/update-links", (req, res) => {
+  const token = req.query.token || req.headers.authorization;
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+  res.json({ success: true, links: getUpdateLinks() });
+});
+
+// Admin - Save Automatic Update Links
+app.post("/api/admin/update-links", (req, res) => {
+  const { token, links } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+  if (!Array.isArray(links)) {
+    return res.status(400).json({ error: "links must be an array of strings" });
+  }
+  const config = getAdminConfig();
+  config.update_links = links.filter(l => typeof l === "string" && l.trim() !== "");
+  saveAdminConfig(config);
+  res.json({ success: true, links: config.update_links });
+});
+
+// Admin - Upload Custom File (Dosya Ekleme)
+app.post("/api/admin/upload-generic", (req, res) => {
+  const { token, filePath, fileContentBase64 } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+  if (!filePath || !fileContentBase64) {
+    return res.status(400).json({ error: "filePath and fileContentBase64 are required" });
+  }
+
+  // Prevent directory traversal escape from workspace
+  const sanitizedPath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
+  const targetPath = path.join(process.cwd(), sanitizedPath);
+
+  try {
+    const dir = path.dirname(targetPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const buffer = Buffer.from(fileContentBase64, "base64");
+    fs.writeFileSync(targetPath, buffer);
+    console.log(`Admin uploaded file successfully: ${sanitizedPath}`);
+
+    res.json({
+      success: true,
+      message: `Dosya başarıyla yüklendi: ${sanitizedPath}`
+    });
+  } catch (err: any) {
+    console.error(`Error uploading file ${sanitizedPath}:`, err);
+    res.status(500).json({ error: "File upload failed", details: err.message });
+  }
+});
+
+// Admin - Import Channels from M3U link or text file (Kalıcı M3U Import)
+app.post("/api/admin/import-m3u", async (req, res) => {
+  const { token, m3uUrl, m3uContent, replaceMode } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  try {
+    let content = m3uContent || "";
+    if (m3uUrl && m3uUrl.trim() !== "") {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(m3uUrl.trim(), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (response.ok) {
+        content = await response.text();
+      } else {
+        return res.status(400).json({ error: `Could not fetch M3U URL: ${response.statusText}` });
+      }
+    }
+
+    if (!content || content.trim() === "") {
+      return res.status(400).json({ error: "No M3U content provided or fetched" });
+    }
+
+    const parsedChannels = parseM3UContent(content);
+    if (parsedChannels.length === 0) {
+      return res.status(400).json({ error: "No valid IPTV channels found in the M3U content" });
+    }
+
+    // Classify and form proper channel objects
+    const formattedChannels = parsedChannels.map((c, index) => {
+      const norm = normalizeChannelName(c.name);
+      const classified = classifyChannel(c);
+      return {
+        id: `m3u_import_${Date.now()}_${index}`,
+        name: c.name,
+        logo: c.logo || "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop",
+        streamUrl: c.streamUrl,
+        category: classified.category,
+        description: `${c.name} yayını, yönetici tarafından kalıcı olarak M3U listesinden içeri aktarıldı.`,
+        language: c.language || "TR",
+        type: classified.type,
+        backupUrls: []
+      };
+    });
+
+    let newList = [];
+    if (replaceMode) {
+      newList = formattedChannels;
+    } else {
+      const existingList = getChannelsList();
+      // Avoid duplicate names by filtering existing
+      const existingNames = new Set(existingList.map(c => normalizeChannelName(c.name)));
+      const uniqueNew = formattedChannels.filter(c => !existingNames.has(normalizeChannelName(c.name)));
+      newList = [...existingList, ...uniqueNew];
+    }
+
+    saveChannelsList(newList);
+    res.json({
+      success: true,
+      message: `${formattedChannels.length} adet kanal başarıyla kalıcı veritabanına aktarıldı!`,
+      channelsCount: formattedChannels.length,
+      totalChannelsCount: newList.length
+    });
+  } catch (err: any) {
+    console.error("M3U permanent import failed:", err);
+    res.status(500).json({ error: "Import failed", details: err.message });
   }
 });
 

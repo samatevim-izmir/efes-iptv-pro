@@ -452,6 +452,165 @@ export default function App() {
     }
   };
 
+  // Dynamic Update Links state
+  const [updateLinks, setUpdateLinks] = useState<string[]>([]);
+  const [newUpdateLink, setNewUpdateLink] = useState("");
+  const [isSavingLinks, setIsSavingLinks] = useState(false);
+  const [linksResult, setLinksResult] = useState("");
+
+  // M3U permanent import states
+  const [m3uImportUrl, setM3uImportUrl] = useState("");
+  const [m3uImportContent, setM3uImportContent] = useState("");
+  const [m3uReplaceMode, setM3uReplaceMode] = useState(false);
+  const [isImportingM3u, setIsImportingM3u] = useState(false);
+  const [m3uImportResult, setM3uImportResult] = useState("");
+
+  // Generic upload states
+  const [genericFilePath, setGenericFilePath] = useState("");
+  const [isUploadingGeneric, setIsUploadingGeneric] = useState(false);
+  const [genericUploadResult, setGenericUploadResult] = useState("");
+
+  useEffect(() => {
+    if (adminToken && activeCategory === "AdminPanel") {
+      const fetchUpdateLinks = async () => {
+        try {
+          const res = await fetch(`/api/admin/update-links?token=${adminToken}`);
+          const data = await res.json();
+          if (data.success && data.links) {
+            setUpdateLinks(data.links);
+          }
+        } catch (err) {
+          console.error("Error fetching update links:", err);
+        }
+      };
+      fetchUpdateLinks();
+    }
+  }, [adminToken, activeCategory]);
+
+  const handleSaveUpdateLinks = async (updatedLinksList: string[]) => {
+    setIsSavingLinks(true);
+    setLinksResult("");
+    try {
+      const res = await fetch("/api/admin/update-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: adminToken, links: updatedLinksList })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUpdateLinks(data.links);
+        setLinksResult("Oynatma listesi kaynakları başarıyla kaydedildi!");
+      } else {
+        setLinksResult(data.error || "Kaynaklar kaydedilemedi.");
+      }
+    } catch (err: any) {
+      setLinksResult("Hata oluştu: " + err.message);
+    } finally {
+      setIsSavingLinks(false);
+      setTimeout(() => setLinksResult(""), 4000);
+    }
+  };
+
+  const handleAddUpdateLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUpdateLink || !newUpdateLink.startsWith("http")) {
+      setLinksResult("Hata: Geçerli bir HTTP/HTTPS adresi giriniz.");
+      return;
+    }
+    const newList = [...updateLinks, newUpdateLink.trim()];
+    setUpdateLinks(newList);
+    setNewUpdateLink("");
+    handleSaveUpdateLinks(newList);
+  };
+
+  const handleDeleteUpdateLink = (indexToRemove: number) => {
+    const newList = updateLinks.filter((_, idx) => idx !== indexToRemove);
+    setUpdateLinks(newList);
+    handleSaveUpdateLinks(newList);
+  };
+
+  const handlePermanentM3uImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!m3uImportUrl && !m3uImportContent) {
+      setM3uImportResult("Hata: Bir URL girin ya da M3U içeriği yapıştırın.");
+      return;
+    }
+    setIsImportingM3u(true);
+    setM3uImportResult("");
+    try {
+      const res = await fetch("/api/admin/import-m3u", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: adminToken,
+          m3uUrl: m3uImportUrl,
+          m3uContent: m3uImportContent,
+          replaceMode: m3uReplaceMode
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setM3uImportResult(data.message);
+        setM3uImportUrl("");
+        setM3uImportContent("");
+        // Reload channels list dynamically
+        const channelsRes = await fetch("/api/auto-channels");
+        const channelsData = await channelsRes.json();
+        if (channelsData.channels) {
+          setChannels(channelsData.channels);
+        }
+      } else {
+        setM3uImportResult("Hata: " + (data.error || "İçe aktarılamadı."));
+      }
+    } catch (err: any) {
+      setM3uImportResult("Bağlantı hatası: " + err.message);
+    } finally {
+      setIsImportingM3u(false);
+    }
+  };
+
+  const handleGenericFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!genericFilePath || genericFilePath.trim() === "") {
+      setGenericUploadResult("Hata: Önce hedef dosya yolunu belirtmelisiniz.");
+      e.target.value = "";
+      return;
+    }
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingGeneric(true);
+    setGenericUploadResult("");
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64String = (reader.result as string).split(",")[1];
+        const res = await fetch("/api/admin/upload-generic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: adminToken,
+            filePath: genericFilePath,
+            fileContentBase64: base64String
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setGenericUploadResult(data.message);
+          setGenericFilePath("");
+        } else {
+          setGenericUploadResult("Hata: " + (data.error || "Yüklenemedi."));
+        }
+      } catch (err: any) {
+        setGenericUploadResult("Hata: " + err.message);
+      } finally {
+        setIsUploadingGeneric(false);
+        e.target.value = "";
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Load language preference and favorites on startup
   useEffect(() => {
     const savedLang = localStorage.getItem("iptv_lang") as IPTVLanguage;
@@ -508,6 +667,11 @@ export default function App() {
 
   // Anti-tamper protection controls (Item 18)
   useEffect(() => {
+    // If administrator is authenticated, completely lift all copy, paste, inspect, and right-click restrictions
+    if (adminToken) {
+      return;
+    }
+
     const disableInspect = (e: KeyboardEvent) => {
       // Prevent F12, Ctrl+Shift+I, Ctrl+U
       if (
@@ -537,7 +701,7 @@ export default function App() {
       document.removeEventListener("keydown", disableInspect);
       document.removeEventListener("contextmenu", disableRightClick);
     };
-  }, []);
+  }, [adminToken]);
 
   // Fetch EPG for selected channel automatically (Item 9)
   useEffect(() => {
@@ -1791,6 +1955,154 @@ export default function App() {
                               {upgradeFileResult}
                             </div>
                           )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Panel 3: Otomatik Güncelleme Link Yönetimi (M3U Kaynak Havuzu) */}
+                    <div className="p-4 rounded-none border border-white/10 bg-black/60 flex flex-col justify-between">
+                      <div>
+                        <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 mb-2 font-display">
+                          <Settings className="w-4 h-4" />
+                          OTOMATİK GÜNCELLEME LİNKLERİ ({updateLinks.length})
+                        </h4>
+                        <p className="text-[10px] text-white/40 mb-4 leading-relaxed uppercase tracking-wider font-mono">
+                          Yayın güncelleme işlemi sırasında taranacak IPTV / M3U kaynak havuzunu buradan dinamik olarak yönetebilirsiniz.
+                        </p>
+
+                        <div className="max-h-36 overflow-y-auto border border-white/10 bg-black/40 p-2 flex flex-col gap-1 mb-4 font-mono text-[9px]">
+                          {updateLinks.map((link, idx) => (
+                            <div key={idx} className="flex justify-between items-center p-1.5 bg-black/40 border border-white/5 gap-2">
+                              <span className="truncate text-white/70 tracking-wider lowercase" title={link}>{link}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteUpdateLink(idx)}
+                                className="p-1 hover:bg-red-600/20 text-red-400 hover:text-white transition cursor-pointer"
+                                title="Sil"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                          {updateLinks.length === 0 && (
+                            <div className="text-center text-white/30 py-4">KAYITLI KAYNAK LİNKİ YOK</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <form onSubmit={handleAddUpdateLink} className="flex flex-col gap-2">
+                        <div className="flex gap-2">
+                          <input
+                            type="url"
+                            required
+                            placeholder="https://.../playlist.m3u"
+                            value={newUpdateLink}
+                            onChange={(e) => setNewUpdateLink(e.target.value)}
+                            className="flex-1 px-3 py-1.5 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25 text-[10px]"
+                          />
+                          <button
+                            type="submit"
+                            disabled={isSavingLinks}
+                            className="px-3 py-1.5 rounded-none bg-cyber-accent text-black font-mono font-bold text-[10px] tracking-widest hover:bg-white transition cursor-pointer"
+                          >
+                            EKLE
+                          </button>
+                        </div>
+                        {linksResult && (
+                          <div className="mt-1 p-2 rounded-none bg-white/5 border border-white/10 text-[9px] font-mono text-white/80 uppercase">
+                            {linksResult}
+                          </div>
+                        )}
+                      </form>
+                    </div>
+
+                    {/* Panel 4: M3U İçe Aktarma & Dosya Yükleyici (Kalıcı Kanal & Dosya Ekleme) */}
+                    <div className="p-4 rounded-none border border-white/10 bg-black/60">
+                      <h4 className="text-[10px] font-bold text-cyber-accent tracking-widest uppercase flex items-center gap-1.5 mb-2 font-display">
+                        <Upload className="w-4 h-4" />
+                        M3U KALICI IMPORT VE GENEL DOSYA YÜKLEYİCİ
+                        <span className="bg-red-600/20 text-red-400 border border-red-500/20 px-1 py-0.2 text-[8px] font-bold uppercase tracking-wider font-mono">ROOT_ACCESS</span>
+                      </h4>
+                      <p className="text-[10px] text-white/40 mb-4 leading-relaxed uppercase tracking-wider font-mono">
+                        Sunucu veritabanına kalıcı olarak M3U kanalları ekleyin veya sunucu dizinine herhangi bir dosya yükleyin.
+                      </p>
+
+                      <div className="flex flex-col gap-4 text-xs">
+                        {/* Permanent M3U Import */}
+                        <div className="border-b border-white/5 pb-3">
+                          <label className="text-white/40 font-bold tracking-widest text-[9px] block mb-1.5 font-mono">M3U YAYIN İTHAL ET (URL VEYA METİN)</label>
+                          <form onSubmit={handlePermanentM3uImport} className="flex flex-col gap-2 font-mono">
+                            <input
+                              type="text"
+                              placeholder="M3U Bağlantı Adresi (Örn: https://.../turkey.m3u)"
+                              value={m3uImportUrl}
+                              onChange={(e) => setM3uImportUrl(e.target.value)}
+                              className="px-3 py-1.5 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25 text-[10px]"
+                            />
+                            <textarea
+                              placeholder="#EXTM3U ile başlayan ham M3U içeriği yapıştırın (İsteğe bağlı)..."
+                              value={m3uImportContent}
+                              onChange={(e) => setM3uImportContent(e.target.value)}
+                              rows={2}
+                              className="px-3 py-1.5 rounded-none outline-none resize-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25 text-[10px]"
+                            />
+                            
+                            <div className="flex items-center justify-between gap-4 mt-1">
+                              <label className="flex items-center gap-2 text-white/50 text-[9px] font-mono select-none cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={m3uReplaceMode}
+                                  onChange={(e) => setM3uReplaceMode(e.target.checked)}
+                                  className="accent-cyber-accent rounded-none cursor-pointer"
+                                />
+                                MEVCUT TÜM YAYINLARI SİL VE YENİDEN YAZ
+                              </label>
+                              <button
+                                type="submit"
+                                disabled={isImportingM3u}
+                                className={`px-4 py-1.5 rounded-none font-mono font-bold tracking-widest text-[9px] cursor-pointer ${
+                                  isImportingM3u 
+                                    ? "bg-white/10 text-white/40 cursor-not-allowed" 
+                                    : "bg-cyber-accent text-black hover:bg-white"
+                                }`}
+                              >
+                                {isImportingM3u ? "İÇE AKTARILIYOR..." : "M3U İTHAL ET"}
+                              </button>
+                            </div>
+                            {m3uImportResult && (
+                              <div className="mt-1 p-2 rounded-none bg-white/5 border border-white/10 text-[9px] font-mono text-white/80 uppercase">
+                                {m3uImportResult}
+                              </div>
+                            )}
+                          </form>
+                        </div>
+
+                        {/* Generic File Uploader */}
+                        <div>
+                          <label className="text-white/40 font-bold tracking-widest text-[9px] block mb-1 font-mono">GENEL DOSYA YÜKLE (RESİM, LOGO, METİN VS.)</label>
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="text"
+                              required
+                              placeholder="Yükleme Dosya Yolu (Örn: public/custom-logo.png)"
+                              value={genericFilePath}
+                              onChange={(e) => setGenericFilePath(e.target.value)}
+                              className="px-3 py-1.5 rounded-none outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25 text-[10px]"
+                            />
+                            <div className="relative">
+                              <input
+                                type="file"
+                                disabled={isUploadingGeneric}
+                                onChange={handleGenericFileUpload}
+                                className="w-full text-[10px] font-mono text-white/50 file:mr-3 file:py-1.5 file:px-3 file:rounded-none file:border-0 file:text-[9px] file:font-bold file:tracking-widest file:uppercase file:bg-white/10 file:text-white file:cursor-pointer hover:file:bg-white/20"
+                              />
+                            </div>
+                            {genericUploadResult && (
+                              <div className="mt-1 p-2 rounded-none bg-white/5 border border-white/10 text-[9px] font-mono text-white/80 uppercase">
+                                {genericUploadResult}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
