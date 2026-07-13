@@ -95,6 +95,16 @@ export default function App() {
   const [isProgressActive, setIsProgressActive] = useState<boolean>(false);
   const [lastBackupInfo, setLastBackupInfo] = useState<string>("");
 
+  // Xtream Codes States
+  const [xtreamHost, setXtreamHost] = useState(() => localStorage.getItem("xtream_host") || "");
+  const [xtreamUser, setXtreamUser] = useState(() => localStorage.getItem("xtream_user") || "");
+  const [xtreamPass, setXtreamPass] = useState(() => localStorage.getItem("xtream_pass") || "");
+  const [isConnectingXtream, setIsConnectingXtream] = useState(false);
+  const [xtreamUserInfo, setXtreamUserInfo] = useState<any>(null);
+  const [xtreamError, setXtreamError] = useState("");
+  const [xtreamSuccess, setXtreamSuccess] = useState("");
+  const [customTab, setCustomTab] = useState<"m3u" | "xtream">("m3u");
+
   // PWA (Progressive Web App) Install state and handlers
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
@@ -1052,6 +1062,181 @@ export default function App() {
     }
   };
 
+  // Xtream Codes Connection Handler
+  const handleConnectXtream = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!xtreamHost || !xtreamUser || !xtreamPass) {
+      setXtreamError("Lütfen tüm alanları doldurun (Sunucu URL, Kullanıcı Adı ve Şifre).");
+      return;
+    }
+
+    setIsConnectingXtream(true);
+    setXtreamError("");
+    setXtreamSuccess("");
+    setXtreamUserInfo(null);
+
+    // Save to localStorage for convenience
+    localStorage.setItem("xtream_host", xtreamHost.trim());
+    localStorage.setItem("xtream_user", xtreamUser.trim());
+    localStorage.setItem("xtream_pass", xtreamPass.trim());
+
+    try {
+      setSecurityToast("Xtream Sunucusuna Bağlanılıyor...");
+      const url = `/api/xtream/proxy?host=${encodeURIComponent(xtreamHost.trim())}&username=${encodeURIComponent(xtreamUser.trim())}&password=${encodeURIComponent(xtreamPass.trim())}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (res.ok && data) {
+        if (data.user_info) {
+          setXtreamUserInfo(data.user_info);
+          setXtreamSuccess("Xtream Codes sunucusuna başarıyla bağlanıldı! Yayınları çekmek için aşağıdaki butonları kullanın.");
+          setSecurityToast("Xtream Bağlantısı Başarılı!");
+        } else if (data.error || (data.valid === 0)) {
+          setXtreamError(data.error || "Geçersiz kullanıcı adı veya şifre.");
+        } else {
+          // Fallback if some panels don't return user_info key directly but are successful
+          setXtreamUserInfo({ username: xtreamUser, status: "Active", exp_date: null });
+          setXtreamSuccess("Xtream Codes bağlantısı sağlandı.");
+          setSecurityToast("Xtream Bağlantısı Başarılı!");
+        }
+      } else {
+        setXtreamError(data.error || "Sunucu bağlantı hatası.");
+      }
+    } catch (err: any) {
+      setXtreamError("Sunucuya bağlanılamadı: " + err.message);
+    } finally {
+      setIsConnectingXtream(false);
+      setTimeout(() => setSecurityToast(""), 4000);
+    }
+  };
+
+  // Xtream Content Fetcher (Live streams, VOD movies, Series)
+  const handleFetchXtreamStreams = async (streamType: "live" | "movie" | "series") => {
+    if (!xtreamHost || !xtreamUser || !xtreamPass) return;
+    
+    setIsConnectingXtream(true);
+    setXtreamError("");
+    setXtreamSuccess("");
+
+    try {
+      let action = "get_live_streams";
+      let actionTitle = "Canlı Yayınlar";
+      if (streamType === "movie") {
+        action = "get_vod_streams";
+        actionTitle = "Sinema Filmleri";
+      } else if (streamType === "series") {
+        action = "get_series";
+        actionTitle = "Dizi Serileri";
+      }
+
+      setSecurityToast(`Xtream ${actionTitle} Yükleniyor...`);
+      
+      const url = `/api/xtream/proxy?host=${encodeURIComponent(xtreamHost.trim())}&username=${encodeURIComponent(xtreamUser.trim())}&password=${encodeURIComponent(xtreamPass.trim())}&action=${action}`;
+      const res = await fetch(url);
+      const streams = await res.json();
+
+      if (res.ok && Array.isArray(streams)) {
+        if (streams.length === 0) {
+          setXtreamError(`Sunucuda hiç ${actionTitle.toLowerCase()} bulunamadı.`);
+          setIsConnectingXtream(false);
+          return;
+        }
+
+        const mapped: IPTVChannel[] = streams.map((stream: any, index: number) => {
+          const name = stream.name || "Xtream Yayın";
+          const id = stream.stream_id || stream.series_id || stream.id;
+          let playUrl = "";
+          let categoryName = stream.category_name || `Xtream ${actionTitle}`;
+
+          let hostUrl = xtreamHost.trim();
+          if (!hostUrl.startsWith("http://") && !hostUrl.startsWith("https://")) {
+            hostUrl = "http://" + hostUrl;
+          }
+          hostUrl = hostUrl.replace(/\/+$/, "");
+
+          if (streamType === "live") {
+            playUrl = `${hostUrl}/live/${xtreamUser}/${xtreamPass}/${id}.ts`;
+          } else if (streamType === "movie") {
+            const ext = stream.container_extension || "mp4";
+            playUrl = `${hostUrl}/movie/${xtreamUser}/${xtreamPass}/${id}.${ext}`;
+          } else if (streamType === "series") {
+            // For series, playUrl points to default placeholder, selected episode updates activeUrl dynamically
+            playUrl = `${hostUrl}/series/${xtreamUser}/${xtreamPass}/${id}.mp4`;
+          }
+
+          return {
+            id: `custom_xtream_${streamType}_${id}_${index}`,
+            name,
+            logo: stream.stream_icon || stream.cover || "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop",
+            streamUrl: playUrl,
+            category: categoryName,
+            description: `${name} yayını, Xtream Codes sunucusundan dinamik olarak yüklendi.`,
+            language: "TR",
+            type: streamType === "series" ? "series" : (streamType === "movie" ? "movie" : "live"),
+          };
+        });
+
+        // Add mapped streams to channels list (removing previously loaded channels of the same Xtream type to prevent endless duplication)
+        setChannels(prev => {
+          const filtered = prev.filter(c => !c.id.startsWith(`custom_xtream_${streamType}_`));
+          return [...filtered, ...mapped];
+        });
+
+        setXtreamSuccess(`${mapped.length} adet ${actionTitle.toLowerCase()} başarıyla listeye eklendi!`);
+        setSecurityToast(`${mapped.length} Yayın Eklendi!`);
+        setActiveCategory("CustomPlaylist");
+      } else {
+        setXtreamError("Yayınlar çekilemedi. Sunucu geçersiz yanıt verdi veya API desteklenmiyor.");
+      }
+    } catch (err: any) {
+      setXtreamError("İşlem hatası: " + err.message);
+    } finally {
+      setIsConnectingXtream(false);
+      setTimeout(() => setSecurityToast(""), 4000);
+    }
+  };
+
+  // Permanently save Xtream Channels to channels_db.json
+  const handleSaveXtreamToDb = async () => {
+    if (!xtreamHost || !xtreamUser || !xtreamPass) return;
+    
+    setIsConnectingXtream(true);
+    setXtreamError("");
+    setXtreamSuccess("");
+
+    try {
+      setSecurityToast("Sistem Kalıcı Import İşlemi Başlatıldı...");
+      const response = await fetch("/api/admin/import-xtream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          host: xtreamHost.trim(),
+          username: xtreamUser.trim(),
+          password: xtreamPass.trim()
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setXtreamSuccess(`BAŞARILI: ${data.imported_count} adet Xtream yayını sunucu kalıcı veritabanına kaydedildi! Sayfayı yeniledikten sonra da izleyebilirsiniz.`);
+        setSecurityToast(`Kalıcı Import Başarılı: +${data.imported_count}`);
+        // Refresh channels list from server
+        const freshRes = await fetch("/api/channels");
+        if (freshRes.ok) {
+          const freshChannels = await freshRes.json();
+          setChannels(freshChannels);
+        }
+      } else {
+        setXtreamError(data.error || "Sunucu kalıcı kaydetme hatası.");
+      }
+    } catch (err: any) {
+      setXtreamError("Kalıcı kaydetme hatası: " + err.message);
+    } finally {
+      setIsConnectingXtream(false);
+      setTimeout(() => setSecurityToast(""), 4000);
+    }
+  };
+
   // M3U Loading URLs handler
   const handleLoadCustomM3uUrl = async () => {
     if (!customM3uUrl.trim()) return;
@@ -1627,46 +1812,225 @@ export default function App() {
               </span>
             </div>
 
-            {/* Custom List M3U Loading Panel (If active category is CustomPlaylist) */}
+            {/* Custom List M3U / Xtream Loading Panel (If active category is CustomPlaylist) */}
             {activeCategory === "CustomPlaylist" && (
               <div className="p-6 rounded-none border border-white/10 bg-black/40 font-mono">
-                <h3 className="text-sm font-display font-black tracking-widest mb-2 flex items-center gap-2 text-white uppercase">
-                  <PlusCircle className="w-4 h-4 text-cyber-accent" />
-                  {t.m3uUploadTitle}
-                </h3>
-                <p className="text-[10px] opacity-60 text-white mb-4 uppercase tracking-wider">
-                  Kendi IPTV sağlayıcınızdan aldığınız .m3u bağlantısını yapıştırabilir veya cihazınızdan .m3u uzantılı dosya seçip yükleyebilirsiniz.
-                </p>
-                
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <input
-                    type="text"
-                    placeholder={t.m3uPlaceholder}
-                    value={customM3uUrl}
-                    onChange={(e) => setCustomM3uUrl(e.target.value)}
-                    className="flex-1 px-4 py-2.5 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
-                  />
+                {/* Sub-tabs header */}
+                <div className="flex gap-2 border-b border-white/10 pb-4 mb-4">
                   <button
-                    onClick={handleLoadCustomM3uUrl}
-                    className="px-5 py-2.5 rounded-none bg-cyber-accent text-black font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-white cursor-pointer uppercase"
+                    onClick={() => setCustomTab("m3u")}
+                    className={`px-4 py-2 text-xs font-bold tracking-wider uppercase border transition duration-200 cursor-pointer ${
+                      customTab === "m3u"
+                        ? "bg-cyber-accent text-black border-cyber-accent"
+                        : "bg-white/5 hover:bg-white/10 text-white/60 hover:text-white border-white/5"
+                    }`}
                   >
-                    {t.m3uLoadBtn}
+                    M3U PLAYLIST IMPORT
+                  </button>
+                  <button
+                    onClick={() => setCustomTab("xtream")}
+                    className={`px-4 py-2 text-xs font-bold tracking-wider uppercase border transition duration-200 cursor-pointer ${
+                      customTab === "xtream"
+                        ? "bg-cyber-accent text-black border-cyber-accent"
+                        : "bg-white/5 hover:bg-white/10 text-white/60 hover:text-white border-white/5"
+                    }`}
+                  >
+                    XTREAM CODES API IMPORT
                   </button>
                 </div>
 
-                <div className="flex items-center gap-4 mt-4 border-t border-white/5 pt-4">
-                  <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{t.m3uFileBtn}:</span>
-                  <label className="cursor-pointer bg-white/5 hover:bg-white/10 text-white font-mono font-bold text-[9px] uppercase tracking-wider py-2 px-4 border border-white/10 transition flex items-center gap-1.5">
-                    <Upload className="w-3.5 h-3.5 text-cyber-accent" />
-                    SELECT_M3U_FILE
-                    <input
-                      type="file"
-                      accept=".m3u"
-                      onChange={handleLoadM3uFile}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
+                {customTab === "m3u" ? (
+                  <>
+                    <h3 className="text-sm font-display font-black tracking-widest mb-2 flex items-center gap-2 text-white uppercase">
+                      <PlusCircle className="w-4 h-4 text-cyber-accent" />
+                      {t.m3uUploadTitle}
+                    </h3>
+                    <p className="text-[10px] opacity-60 text-white mb-4 uppercase tracking-wider">
+                      Kendi IPTV sağlayıcınızdan aldığınız .m3u bağlantısını yapıştırabilir veya cihazınızdan .m3u uzantılı dosya seçip yükleyebilirsiniz.
+                    </p>
+                    
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <input
+                        type="text"
+                        placeholder={t.m3uPlaceholder}
+                        value={customM3uUrl}
+                        onChange={(e) => setCustomM3uUrl(e.target.value)}
+                        className="flex-1 px-4 py-2.5 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
+                      />
+                      <button
+                        onClick={handleLoadCustomM3uUrl}
+                        className="px-5 py-2.5 rounded-none bg-cyber-accent text-black font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-white cursor-pointer uppercase"
+                      >
+                        {t.m3uLoadBtn}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-4 mt-4 border-t border-white/5 pt-4">
+                      <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{t.m3uFileBtn}:</span>
+                      <label className="cursor-pointer bg-white/5 hover:bg-white/10 text-white font-mono font-bold text-[9px] uppercase tracking-wider py-2 px-4 border border-white/10 transition flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5 text-cyber-accent" />
+                        SELECT_M3U_FILE
+                        <input
+                          type="file"
+                          accept=".m3u"
+                          onChange={handleLoadM3uFile}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  // Xtream Codes API Panel
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-display font-black tracking-widest mb-1 flex items-center gap-2 text-white uppercase">
+                      <Tv className="w-4 h-4 text-cyber-accent" />
+                      XTREAM CODES API ENTEGRASYONU
+                    </h3>
+                    <p className="text-[10px] opacity-60 text-white uppercase tracking-wider">
+                      Xtream Codes sunucu bilgilerinizi girerek canlı yayınları, filmleri ve dizi serilerini doğrudan EFES IPTV PRO paneline senkronize edin.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest block mb-1">SUNUCU URL (HOST URL)</label>
+                        <input
+                          type="text"
+                          placeholder="Örn: http://sunucuadresi.com:8080"
+                          value={xtreamHost}
+                          onChange={(e) => setXtreamHost(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest block mb-1">KULLANICI ADI (USERNAME)</label>
+                        <input
+                          type="text"
+                          placeholder="Kullanıcı Adı"
+                          value={xtreamUser}
+                          onChange={(e) => setXtreamUser(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest block mb-1">ŞİFRE (PASSWORD)</label>
+                        <input
+                          type="password"
+                          placeholder="Şifre"
+                          value={xtreamPass}
+                          onChange={(e) => setXtreamPass(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-none text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-cyber-accent font-mono placeholder:text-white/25"
+                        />
+                      </div>
+                    </div>
+
+                    {xtreamError && (
+                      <div className="p-3 bg-red-950/40 border border-red-500/30 text-red-400 text-[10px] font-bold uppercase leading-relaxed">
+                        HATA: {xtreamError}
+                      </div>
+                    )}
+
+                    {xtreamSuccess && (
+                      <div className="p-3 bg-green-950/40 border border-green-500/30 text-green-400 text-[10px] font-bold uppercase leading-relaxed">
+                        SİSTEM MESAJI: {xtreamSuccess}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2.5 pt-2">
+                      <button
+                        onClick={() => handleConnectXtream()}
+                        disabled={isConnectingXtream}
+                        className="px-5 py-2.5 rounded-none bg-cyber-accent text-black font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-white disabled:opacity-50 cursor-pointer uppercase"
+                      >
+                        {isConnectingXtream ? "BAĞLANILIYOR..." : "SUNUCUYA BAĞLAN"}
+                      </button>
+
+                      {xtreamUserInfo && (
+                        <button
+                          onClick={() => handleSaveXtreamToDb()}
+                          disabled={isConnectingXtream}
+                          className="px-5 py-2.5 rounded-none bg-amber-500 text-black font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-amber-400 disabled:opacity-50 cursor-pointer uppercase"
+                          title="Seçilen yayınları yerel sunucuda kalıcı veritabanına kaydeder."
+                        >
+                          LİSTEYİ ADMİN OLARAK KAYDET (SAVE TO DB)
+                        </button>
+                      )}
+
+                      {channels.some(c => c.id.startsWith("custom_")) && (
+                        <button
+                          onClick={() => {
+                            setChannels(prev => prev.filter(c => !c.id.startsWith("custom_")));
+                            setXtreamSuccess("Tüm özel ve Xtream yayınları listeden temizlendi.");
+                          }}
+                          className="px-5 py-2.5 rounded-none bg-red-950/40 border border-red-500/30 text-red-400 font-mono font-bold tracking-wider text-xs transition duration-300 hover:bg-red-900 hover:text-white cursor-pointer uppercase"
+                        >
+                          ÖZEL LİSTEYİ TEMİZLE
+                        </button>
+                      )}
+                    </div>
+
+                    {xtreamUserInfo && (
+                      <div className="mt-4 p-4 border border-white/5 bg-slate-950/60 text-xs">
+                        <h4 className="font-bold text-cyan-400 mb-2 uppercase tracking-widest text-[10px]">
+                          BAĞLANTI BİLGİLERİ (ACCOUNT INFO)
+                        </h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-[10px] uppercase font-mono mb-4">
+                          <div>
+                            <span className="text-white/40 block">DURUM (STATUS):</span>
+                            <span className={xtreamUserInfo.status === "Active" ? "text-green-400 font-bold" : "text-amber-400 font-bold"}>
+                              {xtreamUserInfo.status || "Aktif"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-white/40 block">BİTİŞ TARİHİ (EXPIRY):</span>
+                            <span>
+                              {xtreamUserInfo.exp_date 
+                                ? new Date(parseInt(xtreamUserInfo.exp_date) * 1000).toLocaleDateString()
+                                : "Sınırsız / Ömür Boyu"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-white/40 block">MAX BAĞLANTI (MAX CONNECTIONS):</span>
+                            <span>{xtreamUserInfo.max_connections || "1"}</span>
+                          </div>
+                          <div>
+                            <span className="text-white/40 block">AKTİF BAĞLANTI (ACTIVE):</span>
+                            <span>{xtreamUserInfo.active_cons || "0"}</span>
+                          </div>
+                        </div>
+
+                        {/* Stream Fetch Buttons */}
+                        <div className="mt-5 pt-4 border-t border-white/5">
+                          <label className="text-[9px] text-cyan-400 font-bold uppercase tracking-widest block mb-2">
+                            YAYINLARI LİSTEYE ÇEK (FETCH CONTENT TO PLAYLIST)
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => handleFetchXtreamStreams("live")}
+                              disabled={isConnectingXtream}
+                              className="px-4 py-2 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 text-[10px] font-bold uppercase transition cursor-pointer"
+                            >
+                              CANLI YAYINLARI YÜKLE
+                            </button>
+                            <button
+                              onClick={() => handleFetchXtreamStreams("movie")}
+                              disabled={isConnectingXtream}
+                              className="px-4 py-2 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 text-[10px] font-bold uppercase transition cursor-pointer"
+                            >
+                              SİNEMA FİLMLERİNİ YÜKLE
+                            </button>
+                            <button
+                              onClick={() => handleFetchXtreamStreams("series")}
+                              disabled={isConnectingXtream}
+                              className="px-4 py-2 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 text-[10px] font-bold uppercase transition cursor-pointer"
+                            >
+                              DİZİ SERİLERİNİ YÜKLE
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

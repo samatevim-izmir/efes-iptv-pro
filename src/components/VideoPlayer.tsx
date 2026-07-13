@@ -78,6 +78,14 @@ export default function VideoPlayer({
   const networkRecoveryAttempts = useRef<number>(0);
   const retryCountRef = useRef<number>(0);
 
+  // Xtream Codes Seasons & Episodes states
+  const [isXtreamSeries, setIsXtreamSeries] = useState(() => channel.id.startsWith("custom_xtream_series_"));
+  const [xtreamEpisodes, setXtreamEpisodes] = useState<any>(null);
+  const [selectedSeason, setSelectedSeason] = useState<string>("");
+  const [selectedEpisodeId, setSelectedEpisodeId] = useState<string>("");
+  const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
+  const [showEpisodesPanel, setShowEpisodesPanel] = useState(true);
+
   const t = TRANSLATIONS[lang];
 
   // Zapping logic (Next / Previous channel zapping)
@@ -134,6 +142,58 @@ export default function VideoPlayer({
       setShowLiveEpgToast(false);
     }
   }, [channel.id, epgList]);
+
+  // Load Xtream Codes episodes if this is an Xtream series
+  useEffect(() => {
+    if (!isXtreamSeries) return;
+
+    const fetchEpisodes = async () => {
+      setIsLoadingEpisodes(true);
+      try {
+        const parts = channel.id.split("_");
+        // ID pattern: custom_xtream_series_SERIESID_INDEX
+        const seriesId = parts[3];
+        const host = localStorage.getItem("xtream_host") || "";
+        const user = localStorage.getItem("xtream_user") || "";
+        const pass = localStorage.getItem("xtream_pass") || "";
+
+        if (!seriesId || !host || !user || !pass) {
+          setIsLoadingEpisodes(false);
+          return;
+        }
+
+        const url = `/api/xtream/proxy?host=${encodeURIComponent(host)}&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&action=get_series_info&series_id=${seriesId}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (res.ok && data && data.episodes) {
+          setXtreamEpisodes(data.episodes);
+          const seasons = Object.keys(data.episodes);
+          if (seasons.length > 0) {
+            setSelectedSeason(seasons[0]);
+            const firstEpisode = data.episodes[seasons[0]][0];
+            if (firstEpisode) {
+              setSelectedEpisodeId(firstEpisode.id.toString());
+              let baseUrl = host;
+              if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+                baseUrl = "http://" + baseUrl;
+              }
+              baseUrl = baseUrl.replace(/\/+$/, "");
+              const ext = firstEpisode.container_extension || "mp4";
+              const epUrl = `${baseUrl}/series/${user}/${pass}/${firstEpisode.id}.${ext}`;
+              setActiveUrl(epUrl);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load Xtream series episodes:", err);
+      } finally {
+        setIsLoadingEpisodes(false);
+      }
+    };
+
+    fetchEpisodes();
+  }, [channel.id, isXtreamSeries]);
 
   // Find current program and progress
   const getActiveEpgProgram = () => {
@@ -772,8 +832,9 @@ export default function VideoPlayer({
     <div
       ref={containerRef}
       onMouseMove={() => setShowControls(true)}
-      className="fixed inset-0 wrongs z-40 bg-slate-950 flex flex-col items-center justify-center overflow-hidden group select-none transition-all duration-300"
+      className="fixed inset-0 wrongs z-40 bg-slate-950 flex flex-row items-stretch justify-stretch overflow-hidden group select-none transition-all duration-300"
     >
+      <div className="flex-1 h-full relative flex flex-col items-center justify-center bg-black overflow-hidden">
       {/* Underlying Video Player Element */}
       {isYoutube ? (
         <div className="w-full h-full max-w-5xl flex items-center justify-center p-4">
@@ -945,6 +1006,20 @@ export default function VideoPlayer({
 
         {/* Floating Controls Right Side - Screen Fullscreen/Maximize & Sizing Close Toggles */}
         <div className="flex items-center gap-3">
+          {isXtreamSeries && (
+            <button
+              onClick={() => setShowEpisodesPanel(prev => !prev)}
+              className={`flex items-center gap-1.5 px-4 py-2 border rounded-xl text-xs font-bold transition shadow-lg ${
+                showEpisodesPanel 
+                  ? "bg-cyan-500 hover:bg-cyan-400 text-black border-cyan-400 shadow-cyan-500/20" 
+                  : "bg-slate-900 hover:bg-slate-800 text-white border-white/10"
+              }`}
+              title="Bölümleri Göster/Gizle"
+            >
+              <Tv className="w-4 h-4" />
+              <span>Bölümler</span>
+            </button>
+          )}
           {/* Quick exit full control block */}
           <button
             onClick={onClose}
@@ -1372,6 +1447,130 @@ export default function VideoPlayer({
                 <span className="font-mono text-slate-500 text-[9px]">
                   ({formatEpgTime(activeEpgInfo.next.start)})
                 </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      </div>
+
+      {/* Xtream Series Seasons & Episodes Right Sidebar */}
+      {isXtreamSeries && showEpisodesPanel && (
+        <div className="w-80 h-full bg-slate-900 border-l border-white/10 flex flex-col z-50 overflow-hidden font-mono text-white select-text">
+          {/* Header */}
+          <div className="p-4 border-b border-white/10 flex justify-between items-center bg-slate-950 flex-shrink-0">
+            <div>
+              <h4 className="text-xs font-black tracking-widest text-cyan-400 uppercase">
+                BÖLÜMLER / SEASONS
+              </h4>
+              <p className="text-[9px] text-white/40 uppercase tracking-wider font-bold">
+                X_EPISODE_MANAGER
+              </p>
+            </div>
+            <button
+              onClick={() => setShowEpisodesPanel(false)}
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition cursor-pointer"
+              title="Kapat"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Season Selector */}
+          {xtreamEpisodes ? (
+            <div className="p-4 border-b border-white/10 bg-slate-950/40 flex-shrink-0">
+              <label className="text-[9px] text-white/40 font-bold uppercase tracking-widest block mb-1.5">
+                SEZON SEÇİN (SELECT SEASON)
+              </label>
+              <select
+                value={selectedSeason}
+                onChange={(e) => {
+                  const s = e.target.value;
+                  setSelectedSeason(s);
+                  const firstEp = xtreamEpisodes[s]?.[0];
+                  if (firstEp) {
+                    setSelectedEpisodeId(firstEp.id.toString());
+                    const host = localStorage.getItem("xtream_host") || "";
+                    const user = localStorage.getItem("xtream_user") || "";
+                    const pass = localStorage.getItem("xtream_pass") || "";
+                    let baseUrl = host;
+                    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+                      baseUrl = "http://" + baseUrl;
+                    }
+                    baseUrl = baseUrl.replace(/\/+$/, "");
+                    const ext = firstEp.container_extension || "mp4";
+                    setActiveUrl(`${baseUrl}/series/${user}/${pass}/${firstEp.id}.${ext}`);
+                  }
+                }}
+                className="w-full px-3 py-2 bg-slate-900 border border-white/10 text-white text-xs rounded-none outline-none focus:border-cyan-400 cursor-pointer"
+              >
+                {Object.keys(xtreamEpisodes).map((seasonKey) => (
+                  <option key={seasonKey} value={seasonKey}>
+                    Sezon {seasonKey} ({xtreamEpisodes[seasonKey]?.length} Bölüm)
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {/* Episode List Scroll Container */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 min-h-0 custom-scrollbar">
+            {isLoadingEpisodes ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                <div className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+                <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-widest animate-pulse">
+                  Bölümler Çekiliyor...
+                </span>
+              </div>
+            ) : xtreamEpisodes && selectedSeason && xtreamEpisodes[selectedSeason] ? (
+              xtreamEpisodes[selectedSeason].map((ep: any, idx: number) => {
+                const isPlayingEp = selectedEpisodeId === ep.id.toString();
+                return (
+                  <button
+                    key={ep.id}
+                    onClick={() => {
+                      setSelectedEpisodeId(ep.id.toString());
+                      const host = localStorage.getItem("xtream_host") || "";
+                      const user = localStorage.getItem("xtream_user") || "";
+                      const pass = localStorage.getItem("xtream_pass") || "";
+                      let baseUrl = host;
+                      if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+                        baseUrl = "http://" + baseUrl;
+                      }
+                      baseUrl = baseUrl.replace(/\/+$/, "");
+                      const ext = ep.container_extension || "mp4";
+                      setActiveUrl(`${baseUrl}/series/${user}/${pass}/${ep.id}.${ext}`);
+                    }}
+                    className={`w-full p-3 border text-left flex items-start gap-3 transition-all duration-200 cursor-pointer relative group ${
+                      isPlayingEp
+                        ? "bg-cyan-500/10 border-cyan-500 text-cyan-300"
+                        : "bg-black/20 border-white/5 hover:border-cyan-500/40 text-white/80 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 font-bold ${isPlayingEp ? "bg-cyan-500 text-black" : "bg-white/5 text-white/40"}`}>
+                      #{ep.episode_num || idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold truncate leading-tight">
+                        {ep.title || `Bölüm ${ep.episode_num || idx + 1}`}
+                      </p>
+                      {ep.info?.duration && (
+                        <p className="text-[8px] text-white/30 font-mono mt-1">
+                          SÜRE: {ep.info.duration}
+                        </p>
+                      )}
+                    </div>
+                    {isPlayingEp && (
+                      <span className="flex-shrink-0 w-2 h-2 rounded-full bg-cyan-400 animate-ping self-center" />
+                    )}
+                  </button>
+                );
+              })
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-[10px] text-white/30 uppercase tracking-widest font-bold">
+                  Sorgu Sonucu Boş
+                </p>
               </div>
             )}
           </div>

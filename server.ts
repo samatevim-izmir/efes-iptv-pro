@@ -61,16 +61,23 @@ function saveAdminPin(newPin: string) {
 // Helper: Get auto-update M3U links
 function getUpdateLinks(): string[] {
   const config = getAdminConfig();
-  if (config.update_links && Array.isArray(config.update_links) && config.update_links.length > 0) {
-    return config.update_links;
-  }
-  return [
+  let links = [
     "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tr.m3u",
     "https://iptv-org.github.io/iptv/countries/tr.m3u",
     "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u",
     "https://raw.githubusercontent.com/junguler/m3u-radio-music-playlist/main/playlists/turkey.m3u",
     "https://raw.githubusercontent.com/freetv-app/freetv/main/playlists/playlist_turkey.m3u"
   ];
+  if (config.update_links && Array.isArray(config.update_links) && config.update_links.length > 0) {
+    links = config.update_links;
+  }
+  
+  // Her koşulda kullanıcının istediği iptv-org Türkiye linkinin listede olduğundan emin oluyoruz
+  const targetLink = "https://iptv-org.github.io/iptv/countries/tr.m3u";
+  if (!links.includes(targetLink)) {
+    links.push(targetLink);
+  }
+  return links;
 }
 
 // Initialize Gemini SDK with telemetry header
@@ -2028,6 +2035,146 @@ app.get("/api/admin/download-file", (req, res) => {
     res.sendFile(targetPath);
   } else {
     res.status(404).send("File not found");
+  }
+});
+
+// Xtream Codes - Generic API request proxy to bypass CORS and SSL issues
+app.get("/api/xtream/proxy", async (req, res) => {
+  const { host, username, password, ...rest } = req.query;
+  if (!host || !username || !password) {
+    return res.status(400).json({ error: "host, username, and password are required" });
+  }
+
+  let baseUrl = host.toString().trim();
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    baseUrl = "http://" + baseUrl;
+  }
+  baseUrl = baseUrl.replace(/\/+$/, "");
+
+  // Build target URL by appending all query parameters
+  const queryParams = new URLSearchParams();
+  queryParams.set("username", username.toString());
+  queryParams.set("password", password.toString());
+  
+  for (const [key, value] of Object.entries(rest)) {
+    if (value !== undefined) {
+      queryParams.set(key, value.toString());
+    }
+  }
+
+  const targetUrl = `${baseUrl}/player_api.php?${queryParams.toString()}`;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+
+    const response = await fetch(targetUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `Xtream Codes server returned: ${response.statusText}` });
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (err: any) {
+    console.error("Xtream proxy failure:", err.message);
+    res.status(500).json({ error: "Xtream Codes API fetch failed", details: err.message });
+  }
+});
+
+// Admin - Permanently import channels/movies from external Xtream Codes Server
+app.post("/api/admin/import-xtream", async (req, res) => {
+  const { token, host, username, password, type, replaceMode } = req.body || {};
+  if (token !== "admin_token_authenticated_2026") {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  if (!host || !username || !password) {
+    return res.status(400).json({ error: "host, username, and password are required" });
+  }
+
+  try {
+    let baseUrl = host.toString().trim();
+    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+      baseUrl = "http://" + baseUrl;
+    }
+    baseUrl = baseUrl.replace(/\/+$/, "");
+
+    const streamsToFetch = [];
+    if (!type || type === "live" || type === "all") {
+      streamsToFetch.push({ action: "get_live_streams", streamType: "live" });
+    }
+    if (!type || type === "movie" || type === "all") {
+      streamsToFetch.push({ action: "get_vod_streams", streamType: "movie" });
+    }
+
+    let allImported: any[] = [];
+
+    for (const item of streamsToFetch) {
+      const targetUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=${item.action}`;
+      const response = await fetch(targetUrl);
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          data.forEach((stream: any, index: number) => {
+            const name = stream.name || "Xtream Stream";
+            const id = stream.stream_id || stream.id;
+            let streamUrl = "";
+            let category = "Xtream Import";
+            
+            if (item.streamType === "live") {
+              // Standard Xtream Codes Live HLS/TS play pattern
+              streamUrl = `${baseUrl}/live/${username}/${password}/${id}.ts`;
+              category = stream.category_name || "Xtream Canlı";
+            } else {
+              // Standard Xtream Codes Movie HLS/MP4 play pattern
+              const ext = stream.container_extension || "mp4";
+              streamUrl = `${baseUrl}/movie/${username}/${password}/${id}.${ext}`;
+              category = stream.category_name || "Xtream Film";
+            }
+
+            allImported.push({
+              id: `xtream_import_${item.streamType}_${id}`,
+              name,
+              logo: stream.stream_icon || stream.cover || "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop",
+              streamUrl,
+              category,
+              description: `Xtream Codes sunucusundan (${baseUrl}) kalıcı içe aktarılan ${item.streamType === "live" ? "Canlı TV" : "Sinema Filmi"}.`,
+              language: "TR",
+              type: item.streamType,
+              backupUrls: []
+            });
+          });
+        }
+      }
+    }
+
+    if (allImported.length === 0) {
+      return res.status(400).json({ error: "Belirtilen Xtream Codes sunucusunda veya bu bilgilerle hiçbir yayın bulunamadı." });
+    }
+
+    let newList = [];
+    if (replaceMode) {
+      newList = allImported;
+    } else {
+      const existingList = getChannelsList();
+      const existingNames = new Set(existingList.map(c => normalizeChannelName(c.name)));
+      const uniqueNew = allImported.filter(c => !existingNames.has(normalizeChannelName(c.name)));
+      newList = [...existingList, ...uniqueNew];
+    }
+
+    saveChannelsList(newList);
+    res.json({
+      success: true,
+      message: `${allImported.length} adet yayın Xtream sunucusundan başarıyla kalıcı veritabanına aktarıldı!`,
+      channelsCount: allImported.length,
+      totalChannelsCount: newList.length
+    });
+
+  } catch (err: any) {
+    console.error("Xtream Codes admin import failed:", err);
+    res.status(500).json({ error: "Import failed", details: err.message });
   }
 });
 
